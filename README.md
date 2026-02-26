@@ -9,7 +9,7 @@ A full-stack voice-to-TTS application that records your voice, transcribes it, a
                      + emotion text
 ```
 
-<img width="1373" height="637" alt="image" src="https://github.com/user-attachments/assets/023a0b2c-08ae-4623-ab8e-ff0de270e402" />
+<img width="1365" height="596" alt="image" src="https://github.com/user-attachments/assets/287c8079-fdf3-493e-abf4-fa7f578fca52" />
 
 
 1. **Record** — User records voice in the browser using the MediaRecorder API

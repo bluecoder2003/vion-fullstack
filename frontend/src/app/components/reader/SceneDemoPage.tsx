@@ -26,11 +26,9 @@ import {
   type SceneDetectionResult,
 } from "./ambientSounds";
 import {
-  textToSpeech as openaiTextToSpeech,
   OPENAI_VOICES,
   DEFAULT_VOICE_ID,
   buildNarrationInstructions,
-  getSessionApiKey,
 } from "./openaiTtsApi";
 
 // ═══════════════════════════════════════════════════
@@ -1318,8 +1316,7 @@ function splitIntoSentences(text: string): string[] {
   return raw.map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
-// ── OpenAI TTS voices for narration ──
-const NARRATION_VOICES = OPENAI_VOICES;
+const BACKEND_BASE_URL = "http://127.0.0.1:8000";
 
 function BooksTab({
   t,
@@ -1333,7 +1330,6 @@ function BooksTab({
   onStopAmbient: () => void;
 }) {
   const [expandedBook, setExpandedBook] = useState<string | null>(null);
-  // Narration state
   const [narratingKey, setNarratingKey] = useState<string | null>(null);
   const [activeSentenceIdx, setActiveSentenceIdx] = useState(-1);
   const [isBuffering, setIsBuffering] = useState(false);
@@ -1341,105 +1337,108 @@ function BooksTab({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
-  const audioCacheRef = useRef(new Map<string, Blob>());
-
-  // AI Voice selection — OpenAI TTS voices are statically defined
-  const voices = NARRATION_VOICES;
+  const audioCacheRef = useRef(new Map<string, string>());
+  const voices = OPENAI_VOICES;
   const [selectedVoiceId, setSelectedVoiceId] = useState(DEFAULT_VOICE_ID);
   const voicesLoading = false;
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-      if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = ""; }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = "";
+      }
     };
   }, []);
 
-  // Clear cache when voice changes
-  useEffect(() => { audioCacheRef.current.clear(); }, [selectedVoiceId]);
-
-  // Stop narration helper
   const stopNarration = useCallback(() => {
     narrationGenRef.current++;
     abortRef.current?.abort();
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.onended = null; audioRef.current = null; }
-    if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = ""; }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current = null;
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = "";
+    }
     setNarratingKey(null);
     setActiveSentenceIdx(-1);
     setIsBuffering(false);
   }, []);
 
-  // Fetch TTS audio for a sentence
-  const fetchAudio = useCallback(
-    async (sentence: string, cacheKey: string, signal?: AbortSignal): Promise<Blob | null> => {
+  const fetchAudioUrl = useCallback(
+    async (sentence: string, cacheKey: string, signal?: AbortSignal): Promise<string | null> => {
       const cached = audioCacheRef.current.get(cacheKey);
       if (cached) return cached;
-      const apiKey = getSessionApiKey();
-      if (!apiKey) return null;
-      try {
-        const instructions = buildNarrationInstructions(sentence);
-        const blob = await openaiTextToSpeech(apiKey, selectedVoiceId, sentence, instructions, signal);
-        audioCacheRef.current.set(cacheKey, blob);
-        return blob;
-      } catch (err: any) {
-        if (err?.name === "AbortError") return null;
-        throw err;
+
+      const res = await fetch(`${BACKEND_BASE_URL}/api/scene-demo/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: sentence,
+          voice: selectedVoiceId,
+          instructions: buildNarrationInstructions(sentence),
+        }),
+        signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(await res.text());
       }
+
+      const data = await res.json();
+      const url = `${BACKEND_BASE_URL}${data.url}`;
+      audioCacheRef.current.set(cacheKey, url);
+      return url;
     },
-    [selectedVoiceId],
+    [selectedVoiceId]
   );
 
-  // Prefetch next 2 sentences (concurrency limiter in openaiTtsApi queues safely)
   const prefetch = useCallback(
     (sentences: string[], fromIdx: number, passageKey: string) => {
-      const apiKey = getSessionApiKey();
-      if (!apiKey) return;
       for (let i = 1; i <= 2; i++) {
         const n = fromIdx + i;
         if (n < sentences.length) {
           const ck = `${passageKey}:${selectedVoiceId}:${n}`;
           if (!audioCacheRef.current.has(ck)) {
-            openaiTextToSpeech(apiKey, selectedVoiceId, sentences[n], buildNarrationInstructions(sentences[n])).then(
-              (b) => audioCacheRef.current.set(ck, b),
-              () => {},
-            );
+            fetchAudioUrl(sentences[n], ck).catch(() => {});
           }
         }
       }
     },
-    [selectedVoiceId],
+    [fetchAudioUrl, selectedVoiceId]
   );
 
-  // Start narrating a passage (ambient + AI voice together)
   const narratePassage = useCallback(
     (passageKey: string, passage: string, detection: SceneDetectionResult) => {
-      // If already narrating this passage, stop everything
       if (narratingKey === passageKey) {
         stopNarration();
         onStopAmbient();
         return;
       }
 
-      // Stop any current narration & ambient, then start fresh
       stopNarration();
       onStopAmbient();
-
-      // Start ambient scene fresh
-      setTimeout(() => {
-        onPlay(detection.primary, detection.secondary, detection.secondaryWeight);
-      }, 50);
 
       const sentences = splitIntoSentences(passage);
       if (sentences.length === 0) return;
 
       setNarratingKey(passageKey);
+      setIsBuffering(true);
       const gen = ++narrationGenRef.current;
 
-      // Speak sentence by sentence via AI TTS
+      onPlay(detection.primary, detection.secondary, detection.secondaryWeight);
+
       const speakSentence = async (si: number) => {
         if (narrationGenRef.current !== gen) return;
+
         if (si >= sentences.length) {
           setNarratingKey(null);
           setActiveSentenceIdx(-1);
@@ -1447,49 +1446,35 @@ function BooksTab({
           return;
         }
 
-        setActiveSentenceIdx(si);
-        setIsBuffering(true);
-
-        const ctrl = new AbortController();
-        abortRef.current = ctrl;
-
         try {
+          const ctrl = new AbortController();
+          abortRef.current = ctrl;
           const ck = `${passageKey}:${selectedVoiceId}:${si}`;
-          const blob = await fetchAudio(sentences[si], ck, ctrl.signal);
-          if (!blob || ctrl.signal.aborted || narrationGenRef.current !== gen) {
-            if (!ctrl.signal.aborted) { setIsBuffering(false); setNarratingKey(null); setActiveSentenceIdx(-1); }
+          const url = await fetchAudioUrl(sentences[si], ck, ctrl.signal);
+          if (!url || ctrl.signal.aborted || narrationGenRef.current !== gen) {
             return;
           }
 
-          const url = URL.createObjectURL(blob);
-          if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-          blobUrlRef.current = url;
-
           const audio = new Audio(url);
           audioRef.current = audio;
+          setActiveSentenceIdx(si);
           setIsBuffering(false);
 
           audio.onended = () => {
-            URL.revokeObjectURL(url);
-            blobUrlRef.current = "";
             if (narrationGenRef.current === gen) {
               speakSentence(si + 1);
             }
           };
 
           audio.onerror = () => {
-            if (!ctrl.signal.aborted) {
-              setIsBuffering(false);
-              setNarratingKey(null);
-              setActiveSentenceIdx(-1);
-            }
+            setIsBuffering(false);
+            setNarratingKey(null);
+            setActiveSentenceIdx(-1);
           };
 
           await audio.play();
-          // Prefetch upcoming sentences
           prefetch(sentences, si, passageKey);
-        } catch (err: any) {
-          if (err?.name === "AbortError") return;
+        } catch (err) {
           console.error("TTS error:", err);
           setIsBuffering(false);
           setNarratingKey(null);
@@ -1497,12 +1482,11 @@ function BooksTab({
         }
       };
 
-      // Small delay to let ambient start first
       setTimeout(() => {
         if (narrationGenRef.current === gen) speakSentence(0);
-      }, 400);
+      }, 120);
     },
-    [narratingKey, stopNarration, onPlay, onStopAmbient, selectedVoiceId, fetchAudio, prefetch],
+    [fetchAudioUrl, narratingKey, onPlay, onStopAmbient, prefetch, selectedVoiceId, stopNarration],
   );
 
   return (

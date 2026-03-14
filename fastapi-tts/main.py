@@ -1,5 +1,6 @@
 import time
 import os
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -305,4 +306,47 @@ async def generate_audiobook(payload: AudiobookRequest):
             maybe = OUTPUT_DIR / rel
             if maybe.exists():
                 maybe.unlink()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# WORD-LEVEL TIMESTAMPS (for karaoke-style sync)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/word-timestamps/{filename:path}")
+async def get_word_timestamps(filename: str):
+    """
+    Transcribe an audio file with Whisper word-level timestamps.
+    Result is cached as <filename>.timestamps.json alongside the audio file.
+    """
+    # Resolve paths safely (no directory traversal)
+    cache_path = OUTPUT_DIR / f"{filename}.timestamps.json"
+    mp3_path = OUTPUT_DIR / filename
+
+    # Serve cached version if available
+    if cache_path.exists():
+        return json.loads(cache_path.read_text())
+
+    if not mp3_path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    try:
+        with open(mp3_path, "rb") as f:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="verbose_json",
+                timestamp_granularities=["word"],
+            )
+
+        words = [
+            {"word": w.word, "start": w.start, "end": w.end}
+            for w in (transcription.words or [])
+        ]
+
+        # Cache to disk for subsequent requests
+        cache_path.write_text(json.dumps(words))
+        return words
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

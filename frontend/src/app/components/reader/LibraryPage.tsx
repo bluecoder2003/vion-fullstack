@@ -30,6 +30,7 @@ import {
   type ArchiveSearchResult,
 } from "./archiveApi";
 import { parseEpub, parseEpubFromUrl } from "./epubParser";
+import { parsePdf } from "./pdfParser";
 import { ImageWithFallback } from "../figma/ImageWithFallback";
 
 interface LibraryPageProps {
@@ -293,15 +294,25 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
           toast.error("Failed to parse EPUB. The file may be corrupted or unsupported.");
         }
       } else if (name.endsWith(".pdf")) {
-        toast.info("PDF file detected. Loading with sample content for demo.");
-        const customBook = {
-          ...sampleBook,
-          id: crypto.randomUUID(),
-          title: file.name.replace(/\.pdf$/i, ""),
-        };
-        setBook(customBook);
-        setCurrentChapterIndex(0);
-        onOpenBook();
+        toast.info("Parsing PDF file...");
+        try {
+          const buffer = await file.arrayBuffer();
+          const bookData = await parsePdf(
+            buffer,
+            file.name.replace(/\.pdf$/i, "")
+          );
+          setBook(bookData);
+          setCurrentChapterIndex(0);
+          onOpenBook();
+          toast.success(
+            `Opened "${bookData.title}" (${bookData.chapters.length} sections)`
+          );
+        } catch (err) {
+          console.error("PDF parse error:", err);
+          toast.error(
+            "Failed to parse PDF. The file may be scanned or unsupported."
+          );
+        }
       } else {
         toast.error(
           "Unsupported file format. Please use PDF, EPUB, or TXT files."

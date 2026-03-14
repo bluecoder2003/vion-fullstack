@@ -246,12 +246,30 @@ export function FrankensteinDemoPlayer() {
       </div>
 
       <div
-        className="flex items-center justify-between px-4 py-2"
-        style={{ backgroundColor: t.toolbar, borderTop: `1px solid ${t.border}` }}
+        className="relative flex items-center px-4 py-2 min-h-[52px]"
+        style={{
+          backgroundColor: t.toolbar,
+          borderTop: `1px solid ${t.border}`,
+          color: t.toolbarText,
+        }}
       >
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3 pr-20">
+          <button
+            onClick={cycleSpeed}
+            className="px-2 py-1 rounded-md"
+            style={{ background: `${t.border}44`, fontSize: 12, color: t.toolbarText }}
+          >
+            {audioSpeed}x
+          </button>
+
+          <span style={{ fontSize: 11, opacity: 0.85, color: t.toolbarText }}>
+            {timeLabel}
+          </span>
+        </div>
+
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1">
           <button onClick={() => seekBy(-SEEK_SECONDS)} title={`Back ${SEEK_SECONDS}s`}>
-            <RotateCcw size={16} />
+            <RotateCcw size={16} style={{ color: t.toolbarText }} />
           </button>
 
           <button
@@ -261,37 +279,21 @@ export function FrankensteinDemoPlayer() {
             style={{ background: t.accent, color: "#fff", opacity: showSpinner ? 0.6 : 1 }}
           >
             {showSpinner ? (
-              <Loader2 size={16} className="animate-spin" />
+              <Loader2 size={16} className="animate-spin text-white" />
             ) : audioPlaying ? (
-              <Pause size={16} />
+              <Pause size={16} className="text-white" />
             ) : (
-              <Play size={16} />
+              <Play size={16} className="text-white" />
             )}
           </button>
 
           <button onClick={() => seekBy(SEEK_SECONDS)} title={`Forward ${SEEK_SECONDS}s`}>
-            <RotateCw size={16} />
+            <RotateCw size={16} style={{ color: t.toolbarText }} />
           </button>
         </div>
 
-        <button
-          onClick={cycleSpeed}
-          className="px-2 py-1 rounded-md"
-          style={{ background: `${t.border}44`, fontSize: 12 }}
-        >
-          {audioSpeed}x
-        </button>
-
-        <span style={{ fontSize: 11, opacity: 0.5 }}>
-          view sync
-        </span>
-
-        <span style={{ fontSize: 11, opacity: 0.6 }}>
-          {timeLabel}
-        </span>
-
-        <button onClick={handleClose}>
-          <X size={16} />
+        <button onClick={handleClose} className="ml-auto">
+          <X size={16} style={{ color: t.toolbarText }} />
         </button>
       </div>
     </motion.div>

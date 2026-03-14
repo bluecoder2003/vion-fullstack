@@ -9,6 +9,12 @@ export function ContentsSidebar() {
 
   if (!book) return null;
 
+  const getChapterLabel = (title: string, idx: number) => {
+    if (book.id !== "frankenstein-demo") return title;
+    if (idx < 4) return `Letter ${idx + 1}`;
+    return `Chapter ${idx - 3}`;
+  };
+
   return (
     <div
       className="w-[260px] flex flex-col shrink-0 h-full"
@@ -54,7 +60,9 @@ export function ContentsSidebar() {
                     ? `${t.accent}22`
                     : "transparent",
                 color: t.sidebarText,
-                paddingLeft: chapter.title.startsWith("Letter") ? "24px" : "32px",
+                paddingLeft: getChapterLabel(chapter.title, idx).startsWith("Letter")
+                  ? "24px"
+                  : "32px",
                 borderRadius: 6,
                 margin: "0 4px",
               }}
@@ -64,7 +72,7 @@ export function ContentsSidebar() {
                   fontWeight: idx === currentChapterIndex ? 500 : 400,
                 }}
               >
-                {chapter.title}
+                {getChapterLabel(chapter.title, idx)}
               </span>
               <span style={{ opacity: 0.5 }}>{chapter.page}</span>
             </div>

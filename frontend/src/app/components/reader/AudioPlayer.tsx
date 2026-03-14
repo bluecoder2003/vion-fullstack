@@ -1327,7 +1327,7 @@ export function AudioPlayer() {
       </div>
 
       <div
-        className="flex items-center justify-between px-4 py-2"
+        className="flex items-center justify-between px-4 py-2 text-white"
         style={{ backgroundColor: t.toolbar, borderTop: `1px solid ${t.border}` }}
       >
         {/* Transport */}

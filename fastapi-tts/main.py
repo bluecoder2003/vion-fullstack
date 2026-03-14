@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
+from scene_demo_tts import create_scene_demo_router
 
 
 UPLOAD_DIR = Path("uploads")
@@ -38,6 +39,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # expose generated audio files
 app.mount("/tts", StaticFiles(directory=str(OUTPUT_DIR)), name="tts")
+app.include_router(create_scene_demo_router(client, OUTPUT_DIR))
 
 
 # ─────────────────────────────────────────────────────────────

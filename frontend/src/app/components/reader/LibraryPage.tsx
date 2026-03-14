@@ -234,6 +234,7 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
     try {
       toast.info("Fetching Frankenstein EPUB...");
       const bookData = await parseEpubFromUrl(FRANKENSTEIN_EPUB_URL, "Frankenstein");
+      bookData.id = "frankenstein-demo";
       setBook(bookData);
       setCurrentChapterIndex(0);
       onOpenBook();

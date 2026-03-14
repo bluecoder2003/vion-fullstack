@@ -70,6 +70,9 @@ interface ReaderContextType {
   setAudioPlaying: (playing: boolean) => void;
   audioSentenceIndex: number;
   setAudioSentenceIndex: (idx: number) => void;
+  /** Word index within the currently active sentence (karaoke tracking). -1 = none */
+  audioWordIndex: number;
+  setAudioWordIndex: (idx: number) => void;
   audioSpeed: number;
   setAudioSpeed: (speed: number) => void;
 
@@ -104,6 +107,7 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
   const [isAudioMode, setIsAudioMode] = useState(false);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioSentenceIndex, setAudioSentenceIndex] = useState(0);
+  const [audioWordIndex, setAudioWordIndex] = useState(-1);
   const [audioSpeed, setAudioSpeed] = useState(1);
 
   // Personal voice state
@@ -190,6 +194,8 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
         setAudioPlaying,
         audioSentenceIndex,
         setAudioSentenceIndex,
+        audioWordIndex,
+        setAudioWordIndex,
         audioSpeed,
         setAudioSpeed,
         // Personal voice

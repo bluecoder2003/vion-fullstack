@@ -54,7 +54,7 @@ On the birth of a second son, my junior by seven years, my parents gave up entir
 No human being could have passed a happier childhood than myself. My parents were possessed by the very spirit of kindness and indulgence. We felt that they were not the tyrants to rule our lot according to their caprice, but the agents and creators of all the many delights which we enjoyed. When I mingled with other families I distinctly discerned how peculiarly fortunate my lot was, and gratitude assisted the development of filial love.`;
 
 export const sampleBook: Book = {
-  id: "frankenstein",
+  id: "frankenstein-demo",
   title: "Frankenstein",
   author: "Mary Shelley",
   totalPages: 84,

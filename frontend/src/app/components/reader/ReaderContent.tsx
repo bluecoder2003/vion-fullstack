@@ -1,8 +1,9 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
 import { HighlightToolbar } from "./HighlightToolbar";
 import { AudiobookPlayer } from "./AudiobookPlayer";
+import { FrankensteinDemoPlayer } from "./DemoBookPlayer";
 import { buildSentenceMap } from "./audioUtils";
 import { ChevronLeft, ChevronRight, Highlighter } from "lucide-react";
 import { AnimatePresence } from "motion/react";
@@ -402,21 +403,20 @@ export function ReaderContent() {
       >
         {para.sentences.map((sentence, sIdx) => {
           const globalIdx = para.startIdx + sIdx;
-          const isActiveSentence =
-            isAudioMode && audioSentenceIndex === globalIdx;
+          const isActiveSentence = isAudioMode && audioSentenceIndex === globalIdx;
 
-          // Check for user text highlights within this sentence
-          let content: React.ReactNode = sentence;
+          // Sentence-level user highlight color
           let sentenceHighlightColor: string | null = null;
           const matchingHighlights = chapterHighlights.filter(
             (hl) => sentence.includes(hl.text) || hl.text.includes(sentence.trim())
           );
-
           if (matchingHighlights.length > 0) {
             sentenceHighlightColor = matchingHighlights[0].color;
           }
 
-          // Build inner highlighted spans for partial matches
+          let content: React.ReactNode = sentence;
+
+          // Build inner highlighted spans for partial text matches
           for (const hl of chapterHighlights) {
             if (sentence.includes(hl.text)) {
               const parts = sentence.split(hl.text);
@@ -428,8 +428,8 @@ export function ReaderContent() {
                       backgroundColor: `${hl.color}55`,
                       borderRadius: 2,
                       padding: "1px 0",
-                      boxDecorationBreak: "clone" as any,
-                      WebkitBoxDecorationBreak: "clone" as any,
+                      boxDecorationBreak: "clone" as React.CSSProperties["boxDecorationBreak"],
+                      WebkitBoxDecorationBreak: "clone",
                     }}
                   >
                     {hl.text}
@@ -441,13 +441,12 @@ export function ReaderContent() {
             }
           }
 
-          // Determine background: audio active, highlighted, or none
           const bgColor = isActiveSentence && sentenceHighlightColor
-            ? `${sentenceHighlightColor}30`  // blend: highlight + active
+            ? `${sentenceHighlightColor}30`
             : isActiveSentence
             ? `${t.accent}28`
             : sentenceHighlightColor
-            ? `${sentenceHighlightColor}18`  // subtle sentence-level tint
+            ? `${sentenceHighlightColor}18`
             : "transparent";
 
           return (
@@ -459,9 +458,8 @@ export function ReaderContent() {
                 borderRadius: isActiveSentence || sentenceHighlightColor ? 3 : 0,
                 padding: isActiveSentence || sentenceHighlightColor ? "2px 0" : 0,
                 transition: "background-color 0.35s ease",
-                // Ensures the highlight wraps across column breaks nicely
-                boxDecorationBreak: "clone" as any,
-                WebkitBoxDecorationBreak: "clone" as any,
+                boxDecorationBreak: "clone" as React.CSSProperties["boxDecorationBreak"],
+                WebkitBoxDecorationBreak: "clone",
               }}
             >
               {content}
@@ -613,7 +611,12 @@ export function ReaderContent() {
 
       {/* ── Audiobook Player (anchored to the bottom of this component) ── */}
       <AnimatePresence>
-        {isAudioMode && <AudiobookPlayer />}
+        {isAudioMode &&
+          (book?.id === "frankenstein-demo" ? (
+            <FrankensteinDemoPlayer />
+          ) : (
+            <AudiobookPlayer />
+          ))}
       </AnimatePresence>
     </div>
   );

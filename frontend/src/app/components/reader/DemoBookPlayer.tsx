@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { Play, Pause, SkipForward, SkipBack, X } from "lucide-react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { Play, Pause, RotateCcw, RotateCw, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useReader } from "./ReaderContext";
 import { buildSentenceMap } from "./audioUtils";
 import { themes } from "./themeStyles";
 
-const AUDIO_SRC = "http://127.0.0.1:8000/outputs/epub-1773481150127-1773481567.mp3";
+const AUDIO_SRC = "http://127.0.0.1:8000/tts/epub-1773481150127-1773481567.mp3";
+const SEEK_SECONDS = 10;
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+const BASE_SENTENCE_WEIGHT = 18;
+const WORD_WEIGHT = 1.15;
+const COMMA_WEIGHT = 1.5;
+const PUNCTUATION_WEIGHT = 3;
 
 export function FrankensteinDemoPlayer() {
   const {
@@ -26,47 +32,123 @@ export function FrankensteinDemoPlayer() {
 
   const t = themes[theme];
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  const chapter = book?.chapters[currentChapterIndex];
-
-  const sentenceMap = chapter
-    ? buildSentenceMap(chapter.content)
-    : null;
-
-  const sentences = sentenceMap?.flat ?? [];
-  const totalSentences = sentences.length;
-
   const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const syncModel = useMemo(() => {
+    if (!book) return [];
+
+    let cumulativeWeight = 0;
+    return book.chapters.map((chapter) => {
+      const sentenceMap = buildSentenceMap(chapter.content);
+      const sentences = sentenceMap.flat.map((sentence, localIndex) => {
+        const weight = estimateSentenceWeight(sentence);
+        const item = {
+          localIndex,
+          startWeight: cumulativeWeight,
+          endWeight: cumulativeWeight + weight,
+          weight,
+        };
+        cumulativeWeight += weight;
+        return item;
+      });
+
+      return {
+        total: sentences.length,
+        sentences,
+      };
+    });
+  }, [book]);
+
+  const totalWeight =
+    syncModel[syncModel.length - 1]?.sentences[
+      syncModel[syncModel.length - 1].sentences.length - 1
+    ]?.endWeight ?? 0;
+
+  const syncPlaybackPosition = useCallback(
+    (currentTime: number, totalDuration: number) => {
+      if (!book || totalWeight <= 0 || totalDuration <= 0) return;
+
+      const ratio = Math.min(Math.max(currentTime / totalDuration, 0), 1);
+      const targetWeight = ratio * totalWeight;
+
+      let nextChapterIndex = 0;
+      let localSentenceIndex = 0;
+
+      outer:
+      for (let chapterIndex = 0; chapterIndex < syncModel.length; chapterIndex++) {
+        const chapter = syncModel[chapterIndex];
+        for (let sentenceIndex = 0; sentenceIndex < chapter.sentences.length; sentenceIndex++) {
+          const sentence = chapter.sentences[sentenceIndex];
+          if (targetWeight <= sentence.endWeight || sentenceIndex === chapter.sentences.length - 1) {
+            nextChapterIndex = chapterIndex;
+            localSentenceIndex = sentence.localIndex;
+            break outer;
+          }
+        }
+      }
+
+      if (nextChapterIndex !== currentChapterIndex) {
+        setCurrentChapterIndex(nextChapterIndex);
+      }
+      setAudioSentenceIndex(localSentenceIndex);
+      setProgress(ratio * 100);
+    },
+    [
+      book,
+      currentChapterIndex,
+      setAudioSentenceIndex,
+      setCurrentChapterIndex,
+      syncModel,
+      totalWeight,
+    ]
+  );
 
   // ─────────────────────────────
   // Initialize audio
   // ─────────────────────────────
 
   useEffect(() => {
+    if (!book) return;
+
     const audio = new Audio(AUDIO_SRC);
+    audio.preload = "auto";
     audioRef.current = audio;
 
-    audio.addEventListener("timeupdate", () => {
-      if (!audio.duration) return;
+    const handleLoadedMetadata = () => {
+      setDuration(audio.duration || 0);
+      syncPlaybackPosition(audio.currentTime, audio.duration || 0);
+    };
 
-      const ratio = audio.currentTime / audio.duration;
+    const handleTimeUpdate = () => {
+      if (!audio.duration || Number.isNaN(audio.duration)) return;
+      syncPlaybackPosition(audio.currentTime, audio.duration);
+    };
 
-      setProgress(ratio * 100);
-
-      const sentenceIndex = Math.floor(ratio * totalSentences);
-
-      setAudioSentenceIndex(sentenceIndex);
-    });
-
-    audio.addEventListener("ended", () => {
+    const handleEnded = () => {
       setAudioPlaying(false);
-    });
+      setProgress(100);
+    };
+
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("ended", handleEnded);
 
     return () => {
       audio.pause();
       audio.src = "";
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("ended", handleEnded);
+      audioRef.current = null;
     };
-  }, [totalSentences, setAudioSentenceIndex, setAudioPlaying]);
+  }, [book, setAudioPlaying, syncPlaybackPosition]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = audioSpeed;
+    }
+  }, [audioSpeed]);
 
   // ─────────────────────────────
   // Play / Pause
@@ -81,47 +163,50 @@ export function FrankensteinDemoPlayer() {
       setAudioPlaying(false);
     } else {
       audio.playbackRate = audioSpeed;
-      audio.play();
-      setAudioPlaying(true);
+      audio.play().then(() => {
+        setAudioPlaying(true);
+      }).catch(() => {
+        setAudioPlaying(false);
+      });
     }
   }, [audioPlaying, audioSpeed, setAudioPlaying]);
 
   // ─────────────────────────────
-  // Skip sentence
+  // Seek
   // ─────────────────────────────
 
-  const jumpToSentence = useCallback(
-    (index: number) => {
+  const seekBy = useCallback(
+    (deltaSeconds: number) => {
       const audio = audioRef.current;
       if (!audio || !audio.duration) return;
-
-      const ratio = index / totalSentences;
-
-      audio.currentTime = ratio * audio.duration;
-
-      setAudioSentenceIndex(index);
+      const nextTime = Math.max(0, Math.min(audio.duration, audio.currentTime + deltaSeconds));
+      audio.currentTime = nextTime;
+      syncPlaybackPosition(nextTime, audio.duration);
     },
-    [totalSentences, setAudioSentenceIndex]
+    [syncPlaybackPosition]
   );
 
-  const handleSkipBack = () => {
-    const prev = Math.max(0, audioSentenceIndex - 1);
-    jumpToSentence(prev);
-  };
+  const handleSeekBack = () => seekBy(-SEEK_SECONDS);
+  const handleSeekForward = () => seekBy(SEEK_SECONDS);
 
-  const handleSkipForward = () => {
-    const next = Math.min(totalSentences - 1, audioSentenceIndex + 1);
-    jumpToSentence(next);
-  };
+  const handleProgressChange = useCallback(
+    (value: number) => {
+      const audio = audioRef.current;
+      if (!audio || !audio.duration) return;
+      const nextTime = (value / 100) * audio.duration;
+      audio.currentTime = nextTime;
+      syncPlaybackPosition(nextTime, audio.duration);
+    },
+    [syncPlaybackPosition]
+  );
 
   // ─────────────────────────────
   // Speed
   // ─────────────────────────────
 
   const cycleSpeed = () => {
-    const speeds = [0.75, 1, 1.25, 1.5, 2];
-    const i = speeds.indexOf(audioSpeed);
-    const next = speeds[(i + 1) % speeds.length];
+    const i = SPEEDS.indexOf(audioSpeed);
+    const next = SPEEDS[(i + 1) % SPEEDS.length];
 
     setAudioSpeed(next);
 
@@ -140,7 +225,13 @@ export function FrankensteinDemoPlayer() {
     setIsAudioMode(false);
   };
 
-  if (!chapter) return null;
+  if (!book) return null;
+
+  const activeChapterMeta = syncModel[currentChapterIndex];
+  const sentenceProgressLabel = activeChapterMeta
+    ? `${audioSentenceIndex + 1}/${activeChapterMeta.total}`
+    : "0/0";
+  const timeLabel = `${formatTime((progress / 100) * duration)} / ${formatTime(duration)}`;
 
   // ─────────────────────────────
   // UI
@@ -168,6 +259,23 @@ export function FrankensteinDemoPlayer() {
         />
       </div>
 
+      <div
+        className="px-4 pt-2"
+        style={{ backgroundColor: t.toolbar }}
+      >
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={0.1}
+          value={progress}
+          onChange={(e) => handleProgressChange(Number(e.target.value))}
+          className="w-full accent-current"
+          style={{ color: t.accent }}
+          aria-label="Audiobook progress"
+        />
+      </div>
+
       {/* Controls */}
       <div
         className="flex items-center justify-between px-4 py-2"
@@ -178,8 +286,8 @@ export function FrankensteinDemoPlayer() {
       >
         {/* Transport */}
         <div className="flex items-center gap-1">
-          <button onClick={handleSkipBack}>
-            <SkipBack size={16} />
+          <button onClick={handleSeekBack} title={`Back ${SEEK_SECONDS}s`}>
+            <RotateCcw size={16} />
           </button>
 
           <button
@@ -190,8 +298,8 @@ export function FrankensteinDemoPlayer() {
             {audioPlaying ? <Pause size={16} /> : <Play size={16} />}
           </button>
 
-          <button onClick={handleSkipForward}>
-            <SkipForward size={16} />
+          <button onClick={handleSeekForward} title={`Forward ${SEEK_SECONDS}s`}>
+            <RotateCw size={16} />
           </button>
         </div>
 
@@ -214,7 +322,16 @@ export function FrankensteinDemoPlayer() {
             opacity: 0.6,
           }}
         >
-          {audioSentenceIndex + 1}/{totalSentences}
+          {sentenceProgressLabel}
+        </span>
+
+        <span
+          style={{
+            fontSize: 11,
+            opacity: 0.6,
+          }}
+        >
+          {timeLabel}
         </span>
 
         {/* Close */}
@@ -223,5 +340,26 @@ export function FrankensteinDemoPlayer() {
         </button>
       </div>
     </motion.div>
+  );
+}
+
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
+  const totalSeconds = Math.floor(seconds);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function estimateSentenceWeight(sentence: string): number {
+  const words = sentence.trim().split(/\s+/).filter(Boolean).length;
+  const commas = (sentence.match(/[,;:]/g) || []).length;
+  const punctuation = (sentence.match(/[.!?]/g) || []).length;
+
+  return (
+    BASE_SENTENCE_WEIGHT +
+    words * WORD_WEIGHT +
+    commas * COMMA_WEIGHT +
+    punctuation * PUNCTUATION_WEIGHT
   );
 }

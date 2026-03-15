@@ -9,6 +9,9 @@ Neural Text-to-Speech, and an Interactive Reading Interface** to create
 a dynamic audiobook experience where narration and text stay
 synchronized.
 
+<img width="1408" height="768" alt="image" src="https://github.com/user-attachments/assets/9bbbea3c-98f2-4fc7-9809-7c11a353fe07" />
+
+
 ------------------------------------------------------------------------
 
 # Project Overview

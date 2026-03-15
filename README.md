@@ -10,7 +10,7 @@ a dynamic audiobook experience where narration and text stay
 synchronized.
 
 <img width="1408" height="768" alt="image" src="https://github.com/user-attachments/assets/9bbbea3c-98f2-4fc7-9809-7c11a353fe07" />
-![WhatsApp Image 2026-03-15 at 7 50 37 PM](https://github.com/user-attachments/assets/72657dc2-4605-45df-a7cd-3f2ed81c355c)
+<img width="1357" height="422" alt="image" src="https://github.com/user-attachments/assets/dceb6bce-f517-429a-99af-0b160c393519" />
 
 
 ------------------------------------------------------------------------

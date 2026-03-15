@@ -7,11 +7,17 @@ import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
 import { buildTimedDemoCues, type DemoCue } from "./demoAudiobookCues";
 
-const AUDIO_SRC = "http://127.0.0.1:8000/tts/epub-1773481150127-1773481567.mp3";
+const DEMO_AUDIO_SOURCES: Record<string, string> = {
+  "frankenstein-demo": "http://127.0.0.1:8000/tts/epub-1773481150127-1773481567.mp3",
+  "pride-and-prejudice-demo": "http://127.0.0.1:8000/tts/pride-and-prejudice-demo/chapter-1-2.wav",
+};
+const DEMO_CHAPTER_LIMITS: Record<string, number> = {
+  "pride-and-prejudice-demo": 2,
+};
 const SEEK_SECONDS = 10;
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
-export function FrankensteinDemoPlayer() {
+export function DemoBookPlayer() {
   const {
     book,
     setCurrentChapterIndex,
@@ -34,9 +40,16 @@ export function FrankensteinDemoPlayer() {
   const [duration, setDuration] = useState(0);
   const [isReady, setIsReady] = useState(false);
 
+  const audioSrc = book ? DEMO_AUDIO_SOURCES[book.id] : null;
+  const chapterLimit = book ? DEMO_CHAPTER_LIMITS[book.id] : undefined;
+
   const cues = useMemo(
-    () => (book && duration > 0 ? buildTimedDemoCues(book, duration) : []),
-    [book, duration]
+    () => (
+      book && duration > 0
+        ? buildTimedDemoCues(book, duration, { chapterLimit })
+        : []
+    ),
+    [book, chapterLimit, duration]
   );
 
   const stopRaf = useCallback(() => {
@@ -82,14 +95,14 @@ export function FrankensteinDemoPlayer() {
   }, [stopRaf, syncCueForTime]);
 
   useEffect(() => {
-    if (!book) return;
+    if (!book || !audioSrc) return;
 
     setIsReady(false);
     setDuration(0);
     setProgress(0);
     activeCueRef.current = -1;
 
-    const audio = new Audio(AUDIO_SRC);
+    const audio = new Audio(audioSrc);
     audio.preload = "auto";
     audioRef.current = audio;
 
@@ -122,7 +135,7 @@ export function FrankensteinDemoPlayer() {
       audio.removeEventListener("ended", handleEnded);
       audioRef.current = null;
     };
-  }, [book, setAudioPlaying, setAudioWordIndex, stopRaf]);
+  }, [audioSrc, book, setAudioPlaying, setAudioWordIndex, stopRaf]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -207,7 +220,7 @@ export function FrankensteinDemoPlayer() {
     setIsAudioMode(false);
   }, [setAudioPlaying, setAudioWordIndex, setIsAudioMode, stopRaf]);
 
-  if (!book) return null;
+  if (!book || !audioSrc) return null;
 
   const timeLabel = `${formatTime((progress / 100) * duration)} / ${formatTime(duration)}`;
   const showSpinner = !isReady && !audioPlaying;

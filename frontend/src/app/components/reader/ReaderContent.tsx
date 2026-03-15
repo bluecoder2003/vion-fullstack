@@ -3,7 +3,7 @@ import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
 import { HighlightToolbar } from "./HighlightToolbar";
 import { AudiobookPlayer } from "./AudiobookPlayer";
-import { FrankensteinDemoPlayer } from "./DemoBookPlayer";
+import { DemoBookPlayer } from "./DemoBookPlayer";
 import { buildSentenceMap } from "./audioUtils";
 import { ChevronLeft, ChevronRight, Highlighter } from "lucide-react";
 import { AnimatePresence } from "motion/react";
@@ -612,8 +612,8 @@ export function ReaderContent() {
       {/* ── Audiobook Player (anchored to the bottom of this component) ── */}
       <AnimatePresence>
         {isAudioMode &&
-          (book?.id === "frankenstein-demo" ? (
-            <FrankensteinDemoPlayer />
+          (book?.id === "frankenstein-demo" || book?.id === "pride-and-prejudice-demo" ? (
+            <DemoBookPlayer />
           ) : (
             <AudiobookPlayer />
           ))}

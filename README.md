@@ -1,190 +1,279 @@
-# Emotion-Aware Audiobook Generator
+# Emotion-Aware Audiobook Generation System
 
-An AI-powered system that converts book text into expressive audiobooks by detecting emotions in sentences and generating speech with appropriate narration style.
+An **AI-powered full-stack system** that converts written books into
+expressive audiobooks by analyzing the emotional tone of sentences and
+generating narration with appropriate speech styles.
 
-This project demonstrates a complete backend pipeline combining Natural Language Processing, Emotion Classification, and Neural Text-to-Speech synthesis.
+The system combines **Natural Language Processing, Emotion Detection,
+Neural Text-to-Speech, and an Interactive Reading Interface** to create
+a dynamic audiobook experience where narration and text stay
+synchronized.
 
----
+------------------------------------------------------------------------
 
-## Overview
+# Project Overview
 
-Traditional text-to-speech systems read text in a flat, monotone voice.
-This project enhances narration by analyzing the emotional context of sentences before generating speech.
+Traditional text-to-speech systems typically produce flat and monotone
+narration.
 
-The system detects emotions such as joy, sadness, anger, or fear and maps them to speech styles to produce a more immersive audiobook experience.
+This project enhances the audiobook experience by:
 
----
+1.  Detecting the emotional tone of each sentence.
+2.  Mapping emotions to narration styles.
+3.  Generating expressive speech using neural text-to-speech.
+4.  Synchronizing the generated audio with an interactive book reader.
 
-## System Architecture
+The result is a **reading interface where the audiobook narration
+dynamically follows the emotional flow of the text while highlighting
+the corresponding sentences in the UI**.
 
-Text input is processed through a multi-stage AI pipeline:
+------------------------------------------------------------------------
 
-Text
-↓
-Sentence Segmentation (spaCy)
-↓
-Emotion Detection (Transformer Model)
-↓
-Emotion → Voice Mapping
-↓
-Neural Text-to-Speech (Kokoro TTS)
-↓
-Audio Streaming / Generation
-↓
-Emotion-aware Audiobook Output
+# System Architecture
 
----
+## AI Backend Pipeline
 
-## Features
+Book Text\
+↓\
+Sentence Segmentation (spaCy)\
+↓\
+Emotion Detection (Transformer Model)\
+↓\
+Emotion → Voice Style Mapping\
+↓\
+Neural Text-to-Speech (Kokoro TTS)\
+↓\
+Audio Generation / Streaming\
+↓\
+Emotion-Aware Audiobook
 
-* Automatic sentence segmentation
-* Transformer-based emotion detection
-* Emotion-driven voice style selection
-* Neural speech synthesis using Kokoro TTS
-* Real-time audio streaming via WebSockets
-* FastAPI backend architecture
-* Local inference (no GPU required)
+------------------------------------------------------------------------
 
----
+## Frontend Reader Pipeline
 
-## Tech Stack
+Book Loader\
+↓\
+Text / EPUB Parsing\
+↓\
+Sentence Mapping\
+↓\
+Interactive Reader UI\
+↓\
+Audio Synchronization Engine\
+↓\
+Sentence Highlighting During Playback
 
-**Backend**
+The frontend ensures that the **currently spoken sentence is highlighted
+in the reading interface**, providing an immersive audiobook reading
+experience.
 
-* Python
-* FastAPI
-* WebSockets
+------------------------------------------------------------------------
 
-**AI / NLP**
+# Key Features
 
-* spaCy
-* HuggingFace Transformers
-* Emotion Classification Models
+## AI & Backend
 
-**Speech Synthesis**
+-   Sentence segmentation using **spaCy**
+-   Emotion classification using **Transformer-based models**
+-   Emotion-aware speech style mapping
+-   Neural speech synthesis using **Kokoro TTS**
+-   Real-time audio generation and streaming
+-   WebSocket-based communication for audio streaming
+-   FastAPI-based backend architecture
 
-* Kokoro Neural TTS
+------------------------------------------------------------------------
 
-**Audio Processing**
+## Frontend Reader
 
-* NumPy
-* SciPy
-* SoundFile
+-   Interactive multi-column book reading interface
+-   Sentence-level highlighting synchronized with narration
+-   Audiobook playback controls
+-   Adjustable playback speed
+-   Chapter navigation
+-   Text highlighting and annotations
+-   Smooth page transitions
+-   Demo audiobook playback mode
 
----
+------------------------------------------------------------------------
 
-## Installation
+# Technology Stack
 
-Clone the repository
+## Backend
 
-```bash
+-   Python
+-   FastAPI
+-   WebSockets
+
+## AI / NLP
+
+-   spaCy
+-   HuggingFace Transformers
+-   Emotion Classification Models
+
+## Speech Synthesis
+
+-   Kokoro Neural Text-to-Speech
+
+## Audio Processing
+
+-   NumPy
+-   SciPy
+-   SoundFile
+
+------------------------------------------------------------------------
+
+# Databases
+
+## PostgreSQL
+
+Used for storing:
+
+-   User data
+-   Book metadata
+-   Reader progress
+-   Highlights and bookmarks
+
+## MongoDB
+
+Used for storing:
+
+-   Parsed book content
+-   Sentence mappings
+-   Processed text structures used for audio synchronization
+
+This hybrid approach allows:
+
+-   **Structured relational data** in PostgreSQL
+-   **Flexible document storage** for book content in MongoDB
+
+------------------------------------------------------------------------
+
+# Frontend
+
+-   React
+-   TypeScript
+-   TailwindCSS
+-   Framer Motion
+-   Lucide Icons
+
+------------------------------------------------------------------------
+
+# Installation
+
+## Clone Repository
+
+``` bash
 git clone https://github.com/yourusername/emotion-audiobook-generator.git
 cd emotion-audiobook-generator
 ```
 
-Create a virtual environment
+------------------------------------------------------------------------
 
-```bash
+# Backend Setup
+
+Create virtual environment
+
+``` bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
 Install dependencies
 
-```bash
-pip install fastapi uvicorn spacy transformers torch numpy scipy soundfile websockets
+``` bash
+pip install fastapi uvicorn spacy transformers torch numpy scipy soundfile websockets psycopg2 pymongo
 ```
 
 Download spaCy model
 
-```bash
+``` bash
 python -m spacy download en_core_web_sm
 ```
 
----
+------------------------------------------------------------------------
 
-## Running the Server
+# Running the Backend
 
-Start the FastAPI backend:
-
-```bash
+``` bash
 uvicorn main:app --reload
 ```
 
-The server will run at:
+Server runs at:
 
-```
 http://127.0.0.1:8000
-```
 
 WebSocket endpoint:
 
-```
 ws://127.0.0.1:8000/stream
+
+------------------------------------------------------------------------
+
+# Frontend Setup
+
+Install dependencies
+
+``` bash
+npm install
 ```
 
----
+Run development server
 
-## Running the Client
-
-To test the audio streaming pipeline:
-
-```bash
-python test_client.py
+``` bash
+npm run dev
 ```
 
-This will:
+Frontend runs at:
 
-1. Send text to the WebSocket server
-2. Receive generated speech audio
-3. Save the output as
+http://localhost:3000
 
-```
-streamed_audio.wav
-```
+------------------------------------------------------------------------
 
----
+# Example Input
 
-## Example Input
-
-```
-The wind blew softly across the forest as the sun slowly began to rise.
-Suddenly the door slammed open.
+The wind blew softly across the forest as the sun slowly began to rise.\
+Suddenly the door slammed open.\
 Run! Run for your life!
-```
 
-The system analyzes emotional tone and adjusts the speech output accordingly.
+The system analyzes the emotional tone of each sentence and generates
+narration with expressive speech styles.
 
----
+------------------------------------------------------------------------
 
-## Project Structure
+# Project Structure
 
-```
-audiobooks/
-│
-├── main.py            # FastAPI backend and WebSocket streaming
-├── test_client.py     # WebSocket test client
-├── kokoro_test.py     # Local TTS testing
-├── speech.wav         # Sample generated audio
-├── streamed_audio.wav # Streamed output audio
-├── venv/              # Python virtual environment
-└── README.md
-```
+project-root/
 
----
+backend/ - main.py - test_client.py - kokoro_test.py
 
-## Future Improvements
+frontend/ - LibraryPage.tsx - ReaderPage.tsx - ReaderContent.tsx -
+AudiobookPlayer.tsx - FrankensteinDemoPlayer.tsx - ReaderContext.tsx -
+themeStyles.ts - audioUtils.ts
 
-* Character voice detection for dialogue
-* Emotion-aware background music
-* Dynamic speech prosody control
-* Multi-speaker narration
-* Real-time audiobook generation
-* Web-based user interface
+database/ - postgres/ - mongo/
 
----
+README.md
 
+------------------------------------------------------------------------
 
-## License
+# Future Improvements
 
-This project is intended for academic and research purposes.
+-   Character-specific voice synthesis
+-   Dialogue detection
+-   Emotion-aware background music
+-   Multi-speaker narration
+-   Voice cloning for characters
+-   Real-time audiobook streaming
+-   Mobile optimized reading interface
+
+------------------------------------------------------------------------
+
+# Author
+
+Neelakshi Das\
+Final Year Project -- Emotion-Aware Audiobook Generation System
+
+------------------------------------------------------------------------
+
+# License
+
+This project is intended for **academic and research purposes**.

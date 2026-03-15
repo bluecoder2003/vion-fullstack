@@ -43,7 +43,7 @@ Emotion → Voice Style Mapping\
 ↓\
 Neural Text-to-Speech (Kokoro TTS)\
 ↓\
-Audio Generation / Streaming\
+Audio Generation and on the fly Streaming\
 ↓\
 Emotion-Aware Audiobook
 

@@ -8,16 +8,23 @@ from dotenv import load_dotenv
 
 load_dotenv()  # loads OPENAI_API_KEY from .env
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
-from scene_demo_tts import create_scene_demo_router
+from scene_demo_tts import (
+    create_scene_demo_router,
+    generate_emotional_wav_chunks,
+    write_emotional_wav_file,
+    write_kokoro_wav_file,
+)
 
 
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
+PREVIEW_PAGE_COUNT = 4
+PREVIEW_CHAR_BUDGET = 12000
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -39,7 +46,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # expose generated audio files
 app.mount("/tts", StaticFiles(directory=str(OUTPUT_DIR)), name="tts")
-app.include_router(create_scene_demo_router(client, OUTPUT_DIR))
+app.include_router(create_scene_demo_router(OUTPUT_DIR))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -69,20 +76,9 @@ async def tts(audio: UploadFile = File(...), emotion: str = Form("neutral")):
         if not spoken_text.strip():
             raise HTTPException(status_code=400, detail="Empty transcription")
 
-        # emotional TTS
-        tts_response = client.audio.speech.create(
-            model="gpt-4o-mini-tts",
-            voice="coral",
-            input=spoken_text,
-            instructions=f"Speak in a {emotion} tone.",
-        )
-
-        audio_bytes = tts_response.read()
-
-        output_file = OUTPUT_DIR / f"converted-{int(time.time())}.mp3"
-
-        with open(output_file, "wb") as f:
-            f.write(audio_bytes)
+        voice = "af_nicole" if emotion.lower() in {"anger", "angry", "shout"} else "af_heart"
+        output_file = OUTPUT_DIR / f"converted-{int(time.time())}.wav"
+        write_kokoro_wav_file(spoken_text, voice, output_file)
 
         return {
             "success": True,
@@ -111,7 +107,7 @@ class AudiobookRequest(BaseModel):
     title: str
     author: str
     chapters: List[Chapter]
-    voice: Optional[str] = "coral"
+    voice: Optional[str] = "af_heart"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -217,6 +213,107 @@ def _split_into_chunks(text: str, max_chars: int = 4000) -> list[str]:
     return chunks
 
 
+def _trim_text_to_chars(text: str, max_chars: int) -> str:
+
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+
+    paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
+    if not paragraphs:
+        shortened = stripped[:max_chars]
+        return shortened.rsplit(" ", 1)[0].strip() or shortened.strip()
+
+    kept: list[str] = []
+    used = 0
+
+    for para in paragraphs:
+        addition = len(para) + (2 if kept else 0)
+        if used + addition <= max_chars:
+            kept.append(para)
+            used += addition
+            continue
+
+        remaining = max_chars - used - (2 if kept else 0)
+        if remaining > 120:
+            shortened = para[:remaining].rsplit(" ", 1)[0].strip() or para[:remaining].strip()
+            if shortened:
+                kept.append(shortened)
+        break
+
+    return "\n\n".join(kept).strip()
+
+
+def _select_preview_chapters(chapters: list[Chapter]) -> list[Chapter]:
+
+    if not chapters:
+        return []
+
+    first_page = next((ch.page for ch in chapters if ch.page is not None), None)
+    page_cutoff = None if first_page is None else first_page + PREVIEW_PAGE_COUNT - 1
+
+    preview_candidates = [
+        ch for ch in chapters
+        if page_cutoff is None or ch.page is None or ch.page <= page_cutoff
+    ]
+
+    if not preview_candidates:
+        preview_candidates = chapters[:1]
+
+    preview: list[Chapter] = []
+    used_chars = 0
+
+    for chapter in preview_candidates:
+        remaining = PREVIEW_CHAR_BUDGET - used_chars
+        if remaining <= 0:
+            break
+
+        trimmed = _trim_text_to_chars(chapter.content, remaining)
+        if not trimmed:
+            continue
+
+        preview.append(
+            Chapter(
+                id=chapter.id,
+                title=chapter.title,
+                page=chapter.page,
+                content=trimmed,
+            )
+        )
+        used_chars += len(trimmed)
+
+        if len(trimmed) < len(chapter.content):
+            break
+
+    if preview:
+        return preview
+
+    first = chapters[0]
+    return [
+        Chapter(
+            id=first.id,
+            title=first.title,
+            page=first.page,
+            content=_trim_text_to_chars(first.content, PREVIEW_CHAR_BUDGET),
+        )
+    ]
+
+
+def _is_pride_and_prejudice_preview(book_id: str, title: str) -> bool:
+    book_key = f"{book_id} {title}".lower()
+    return "pride" in book_key and "prejudice" in book_key
+
+
+def _select_demo_audiobook_chapters(
+    book_id: str,
+    title: str,
+    chapters: list[Chapter],
+) -> list[Chapter]:
+    if _is_pride_and_prejudice_preview(book_id, title):
+        return chapters[:2]
+    return _select_preview_chapters(chapters)
+
+
 # ─────────────────────────────────────────────────────────────
 # GENERATE AUDIOBOOK
 # ─────────────────────────────────────────────────────────────
@@ -227,6 +324,14 @@ async def generate_audiobook(payload: AudiobookRequest):
     if not payload.chapters:
         raise HTTPException(status_code=400, detail="No chapters provided")
 
+    preview_chapters = _select_demo_audiobook_chapters(
+        payload.book_id,
+        payload.title,
+        payload.chapters,
+    )
+    if not preview_chapters:
+        raise HTTPException(status_code=400, detail="No previewable chapters provided")
+
     safe_book_id = "".join(
         c if c.isalnum() or c in ("-", "_") else "_"
         for c in payload.book_id
@@ -236,62 +341,33 @@ async def generate_audiobook(payload: AudiobookRequest):
     book_dir = OUTPUT_DIR / safe_book_id
     book_dir.mkdir(exist_ok=True)
 
-    # Split chapters into up to 5 contiguous parts
-    total_chapters = len(payload.chapters)
-    num_parts = min(5, max(1, total_chapters))
-
-    # Ensure at least 1 chapter per part
-    base_size = total_chapters // num_parts
-    remainder = total_chapters % num_parts
-
     part_files: list[str] = []
-    idx = 0
 
     try:
-        for part_idx in range(num_parts):
-            # Distribute remainder chapters one by one into the first parts
-            size = base_size + (1 if part_idx < remainder else 0)
-            if size <= 0:
-                continue
+        part_name = "chapter-1-2.wav" if _is_pride_and_prejudice_preview(
+            payload.book_id,
+            payload.title,
+        ) else "preview-part-1.wav"
+        output_file = book_dir / part_name
+        part_chunks: list[str] = []
 
-            part_chapters = payload.chapters[idx : idx + size]
-            idx += size
+        for chapter in preview_chapters:
+            paragraphs = [
+                p.strip()
+                for p in chapter.content.split("\n\n")
+                if p.strip()
+            ]
 
-            if not part_chapters:
-                continue
+            for para in paragraphs:
+                part_chunks.extend(_split_into_chunks(para))
 
-            part_name = f"part-{part_idx + 1}.mp3"
-            output_file = book_dir / part_name
-
-            with open(output_file, "wb") as out_f:
-                for chapter in part_chapters:
-                    paragraphs = [
-                        p.strip()
-                        for p in chapter.content.split("\n\n")
-                        if p.strip()
-                    ]
-
-                    for para in paragraphs:
-                        for chunk in _split_into_chunks(para):
-                            instructions = _build_narration_instructions(chunk)
-
-                            tts_response = client.audio.speech.create(
-                                model="gpt-4o-mini-tts",
-                                voice=payload.voice or "coral",
-                                input=chunk,
-                                instructions=instructions,
-                            )
-
-                            audio_bytes = tts_response.read()
-
-                            if audio_bytes:
-                                out_f.write(audio_bytes)
-
+        if part_chunks:
+            write_emotional_wav_file(part_chunks, output_file)
             part_files.append(f"{safe_book_id}/{part_name}")
 
         if not part_files:
             raise HTTPException(
-                status_code=500, detail="Failed to generate any audiobook parts"
+                status_code=500, detail="Failed to generate audiobook preview"
             )
 
         return {
@@ -309,6 +385,28 @@ async def generate_audiobook(payload: AudiobookRequest):
             if maybe.exists():
                 maybe.unlink()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/stream")
+async def stream_audio(ws: WebSocket):
+    await ws.accept()
+
+    try:
+        text = (await ws.receive_text()).strip()
+        if not text:
+            await ws.close(code=1003)
+            return
+
+        for chunk in generate_emotional_wav_chunks(text):
+            await ws.send_bytes(chunk)
+
+        await ws.send_text("END")
+    except Exception:
+        await ws.close(code=1011)
+        return
+    finally:
+        if ws.client_state.name != "DISCONNECTED":
+            await ws.close()
 
 
 # ─────────────────────────────────────────────────────────────

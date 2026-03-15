@@ -26,10 +26,36 @@ import {
   type SceneDetectionResult,
 } from "./ambientSounds";
 import {
-  OPENAI_VOICES,
-  DEFAULT_VOICE_ID,
   buildNarrationInstructions,
 } from "./openaiTtsApi";
+
+interface NarrationVoice {
+  id: string;
+  name: string;
+  description: string;
+  recommended?: boolean;
+}
+
+const KOKORO_VOICES: NarrationVoice[] = [
+  {
+    id: "af_heart",
+    name: "Heart",
+    description: "Warm, gentle narration",
+    recommended: true,
+  },
+  {
+    id: "af_bella",
+    name: "Bella",
+    description: "Bright, expressive delivery",
+  },
+  {
+    id: "af_nicole",
+    name: "Nicole",
+    description: "Sharper, dramatic tone",
+  },
+];
+
+const DEFAULT_KOKORO_VOICE_ID = "af_heart";
 
 // ═══════════════════════════════════════════════════
 //  EXAMPLE PASSAGES — literary text for each scene
@@ -1338,8 +1364,8 @@ function BooksTab({
   const blobUrlRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
   const audioCacheRef = useRef(new Map<string, string>());
-  const voices = OPENAI_VOICES;
-  const [selectedVoiceId, setSelectedVoiceId] = useState(DEFAULT_VOICE_ID);
+  const voices = KOKORO_VOICES;
+  const [selectedVoiceId, setSelectedVoiceId] = useState(DEFAULT_KOKORO_VOICE_ID);
   const voicesLoading = false;
 
   useEffect(() => {
@@ -1509,7 +1535,7 @@ function BooksTab({
         style={{ backgroundColor: t.surface, border: `1px solid ${t.border}` }}
       >
         <Mic size={14} style={{ color: t.accent, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, color: t.textMuted, flexShrink: 0 }}>Narrator Voice:</span>
+        <span style={{ fontSize: 12, color: t.textMuted, flexShrink: 0 }}>Kokoro Voice:</span>
         <select
           value={selectedVoiceId}
           onChange={(e) => setSelectedVoiceId(e.target.value)}

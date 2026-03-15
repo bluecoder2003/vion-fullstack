@@ -41,6 +41,24 @@ interface LibraryPageProps {
 // URL for the real Frankenstein EPUB
 const FRANKENSTEIN_EPUB_URL =
   "https://raw.githubusercontent.com/bluecoder2003/books-exclusive/main/frankenstein.epub";
+const PRIDE_AND_PREJUDICE_EPUB_URL =
+  "https://raw.githubusercontent.com/bluecoder2003/books-exclusive/main/pride_prejudice_clean.epub";
+
+const CURATED_SAMPLE_BOOKS = [
+  {
+    id: "frankenstein-demo",
+    title: "Frankenstein",
+    author: "Mary Shelley",
+    url: FRANKENSTEIN_EPUB_URL,
+    fallback: sampleBook,
+  },
+  {
+    id: "pride-and-prejudice-demo",
+    title: "Pride and Prejudice",
+    author: "Jane Austen",
+    url: PRIDE_AND_PREJUDICE_EPUB_URL,
+  },
+] as const;
 
 // Curated categories for browse
 const CATEGORIES = [
@@ -229,24 +247,26 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
     [setBook, setCurrentChapterIndex, onOpenBook]
   );
 
-  // Open the Frankenstein EPUB from GitHub
-  const openSampleBook = useCallback(async () => {
+  const openSampleBook = useCallback(async (sample: (typeof CURATED_SAMPLE_BOOKS)[number]) => {
     setLoadingSample(true);
     try {
-      toast.info("Fetching Frankenstein EPUB...");
-      const bookData = await parseEpubFromUrl(FRANKENSTEIN_EPUB_URL, "Frankenstein");
-      bookData.id = "frankenstein-demo";
+      toast.info(`Fetching ${sample.title} EPUB...`);
+      const bookData = await parseEpubFromUrl(sample.url, sample.title);
+      bookData.id = sample.id;
       setBook(bookData);
       setCurrentChapterIndex(0);
       onOpenBook();
       toast.success(`Opened "${bookData.title}" (${bookData.chapters.length} chapters)`);
     } catch (err) {
-      console.error("Failed to load Frankenstein EPUB:", err);
-      // Fallback to hardcoded sample
-      toast.info("EPUB fetch failed, using built-in sample.");
-      setBook(sampleBook);
-      setCurrentChapterIndex(0);
-      onOpenBook();
+      console.error(`Failed to load ${sample.title} EPUB:`, err);
+      if (sample.fallback) {
+        toast.info("EPUB fetch failed, using built-in sample.");
+        setBook(sample.fallback);
+        setCurrentChapterIndex(0);
+        onOpenBook();
+      } else {
+        toast.error(`Failed to load "${sample.title}". Please try again.`);
+      }
     } finally {
       setLoadingSample(false);
     }
@@ -805,79 +825,82 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
                 Sample Library
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-                <button
-                  onClick={openSampleBook}
-                  disabled={loadingSample}
-                  className="text-left cursor-pointer group transition-transform hover:scale-[1.02] w-full disabled:cursor-wait"
-                >
-                  <div
-                    className="aspect-[2/3] rounded-lg overflow-hidden mb-3 flex items-center justify-center relative"
-                    style={{
-                      backgroundColor: "#2a2a35",
-                      borderTop: "1px solid #3a3a45",
-                      borderLeft: "1px solid #3a3a45",
-                      borderRight: "1px solid #3a3a45",
-                      borderBottom: "1px solid #3a3a45",
-                    }}
+                {CURATED_SAMPLE_BOOKS.map((sample) => (
+                  <button
+                    key={sample.id}
+                    onClick={() => openSampleBook(sample)}
+                    disabled={loadingSample}
+                    className="text-left cursor-pointer group transition-transform hover:scale-[1.02] w-full disabled:cursor-wait"
                   >
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                      {loadingSample ? (
-                        <>
-                          <Loader2
-                            size={28}
-                            className="mb-2 animate-spin"
-                            style={{ color: "#6b9fff" }}
-                          />
-                          <div style={{ fontSize: 12, opacity: 0.6 }}>
-                            Loading EPUB…
+                    <div
+                      className="aspect-[2/3] rounded-lg overflow-hidden mb-3 flex items-center justify-center relative"
+                      style={{
+                        backgroundColor: "#2a2a35",
+                        borderTop: "1px solid #3a3a45",
+                        borderLeft: "1px solid #3a3a45",
+                        borderRight: "1px solid #3a3a45",
+                        borderBottom: "1px solid #3a3a45",
+                      }}
+                    >
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                        {loadingSample ? (
+                          <>
+                            <Loader2
+                              size={28}
+                              className="mb-2 animate-spin"
+                              style={{ color: "#6b9fff" }}
+                            />
+                            <div style={{ fontSize: 12, opacity: 0.6 }}>
+                              Loading EPUB…
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <BookOpen
+                              size={28}
+                              className="mb-2"
+                              style={{ color: "#6b9fff", opacity: 0.6 }}
+                            />
+                            <div
+                              style={{
+                                fontSize: 15,
+                                fontWeight: 500,
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {sample.title}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                opacity: 0.5,
+                                marginTop: 6,
+                              }}
+                            >
+                              {sample.author}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {!loadingSample && (
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 backdrop-blur-sm rounded-full p-3">
+                            <BookOpenCheck
+                              size={20}
+                              style={{ color: "#fff" }}
+                            />
                           </div>
-                        </>
-                      ) : (
-                        <>
-                          <BookOpen
-                            size={28}
-                            className="mb-2"
-                            style={{ color: "#6b9fff", opacity: 0.6 }}
-                          />
-                          <div
-                            style={{
-                              fontSize: 15,
-                              fontWeight: 500,
-                              lineHeight: 1.3,
-                            }}
-                          >
-                            Frankenstein
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              opacity: 0.5,
-                              marginTop: 6,
-                            }}
-                          >
-                            Mary Shelley
-                          </div>
-                        </>
+                        </div>
                       )}
                     </div>
-                    {!loadingSample && (
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 backdrop-blur-sm rounded-full p-3">
-                          <BookOpenCheck
-                            size={20}
-                            style={{ color: "#fff" }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>
-                    Frankenstein
-                  </div>
-                  <div style={{ fontSize: 11, opacity: 0.5 }}>
-                    Mary Shelley
-                  </div>
-                </button>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {sample.title}
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.5 }}>
+                      {sample.author}
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
           </div>

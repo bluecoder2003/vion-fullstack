@@ -13,17 +13,26 @@ interface CueSeed {
   weight: number;
 }
 
+interface DemoCueOptions {
+  chapterLimit?: number;
+}
+
 const BASE_PARAGRAPH_WEIGHT = 24;
 const WORD_WEIGHT = 1.35;
 const SENTENCE_WEIGHT = 9;
 const PAUSE_WEIGHT = 1.75;
 
-export function buildTimedDemoCues(book: Book, duration: number): DemoCue[] {
+export function buildTimedDemoCues(
+  book: Book,
+  duration: number,
+  options?: DemoCueOptions
+): DemoCue[] {
   if (!book.chapters.length || duration <= 0) return [];
 
   const seeds: CueSeed[] = [];
+  const chapterLimit = options?.chapterLimit ?? book.chapters.length;
 
-  book.chapters.forEach((chapter, chapterIndex) => {
+  book.chapters.slice(0, chapterLimit).forEach((chapter, chapterIndex) => {
     const sentenceMap = buildSentenceMap(chapter.content);
 
     sentenceMap.paragraphs.forEach((paragraph) => {

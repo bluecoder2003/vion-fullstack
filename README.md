@@ -127,15 +127,6 @@ experience.
 
 # Databases
 
-## PostgreSQL
-
-Used for storing:
-
--   User data
--   Book metadata
--   Reader progress
--   Highlights and bookmarks
-
 ## MongoDB
 
 Used for storing:

@@ -258,21 +258,23 @@ README.md
 
 ------------------------------------------------------------------------
 
+# Improvements from Previous Iteration
+
+-   Web-based reader application enabling access from web browsers, tablets, and larger screens, providing a more natural and comfortable long-form reading experience.
+-   Transition from ElevenLabs API to an AI-driven audiobook generation pipeline using multiple models (emotion detection + Kokoro neural TTS) to produce more expressive and context-aware narration.
+
+------------------------------------------------------------------------
+
 # Future Improvements
 
--   Character-specific voice synthesis
--   Dialogue detection
--   Emotion-aware background music
--   Multi-speaker narration
--   Voice cloning for characters
--   Real-time audiobook streaming
--   Mobile optimized reading interface
+-   Emotion-aware background music generation based on detected scene emotions such as fear, tension, or romance.
+-   Collaborative reading sessions allowing users to share a session link and read or listen to the audiobook together in real time.
 
 ------------------------------------------------------------------------
 
 # Author
 
-Neelakshi Das\
+Neelakshi Das  
 Final Year Project -- Emotion-Aware Audiobook Generation System
 
 ------------------------------------------------------------------------

@@ -59,7 +59,7 @@ Sentence Mapping\
 ↓\
 Interactive Reader UI\
 ↓\
-Audio Synchronization Engine\
+Audio Synchronizer\
 ↓\
 Sentence Highlighting During Playback
 

@@ -37,7 +37,7 @@ Book Text\
 ↓\
 Sentence Segmentation (spaCy)\
 ↓\
-Emotion Detection (Transformer Model)\
+Emotion Detection (A Hugging Face emotion classifier (j-hartmann/emotion-english-distilroberta-base) )\
 ↓\
 Emotion → Voice Style Mapping\
 ↓\

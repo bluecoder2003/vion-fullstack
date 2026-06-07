@@ -43,6 +43,7 @@ export function AudiobookPlayer() {
     setIsAudioMode,
     audioPlaying,
     setAudioPlaying,
+    audioSentenceIndex,
     setAudioSentenceIndex,
     setAudioWordIndex,
     setCurrentChapterIndex,
@@ -69,6 +70,10 @@ export function AudiobookPlayer() {
   const pendingAdvance = useRef(false);
   const activeJobIdRef = useRef<string | null>(null);
   const audioUrlsRef = useRef<string[]>([]);
+  const playUrlRef = useRef<(urls: string[], idx: number, initialSentenceIdx?: number) => void>(() => {});
+
+  const cuesRef = useRef<SentenceCue[]>([]);
+  const lastIndexRef = useRef(audioSentenceIndex);
 
   useEffect(() => {
     audioUrlsRef.current = audioUrls;
@@ -122,7 +127,7 @@ export function AudiobookPlayer() {
     }
   };
 
-  function playUrlAtIndex(urls: string[], idx: number) {
+  const playUrlAtIndex = useCallback((urls: string[], idx: number, initialSentenceIdx?: number) => {
     destroyAudio();
     const url = urls[idx];
     if (!url) return;
@@ -191,6 +196,16 @@ export function AudiobookPlayer() {
       } else {
         cues = estimateSentenceAndWordCues(sentences, audio.duration);
       }
+      cuesRef.current = cues;
+
+      if (initialSentenceIdx !== undefined && initialSentenceIdx < cues.length) {
+        const targetCue = cues[initialSentenceIdx];
+        audio.currentTime = targetCue.startTime;
+        const globalSentenceIdx = sentenceOffset + initialSentenceIdx;
+        lastIndexRef.current = globalSentenceIdx;
+        setAudioSentenceIndex(globalSentenceIdx);
+        setAudioWordIndex(0);
+      }
     });
 
     audio.addEventListener("timeupdate", () => {
@@ -200,7 +215,11 @@ export function AudiobookPlayer() {
       if (cues.length > 0) {
         const nextCueIndex = findCueIndexForTime(cues, audio.currentTime);
         if (nextCueIndex >= 0) {
-          setAudioSentenceIndex(sentenceOffset + cues[nextCueIndex].sentenceIndex);
+          const globalSentenceIdx = sentenceOffset + cues[nextCueIndex].sentenceIndex;
+          if (lastIndexRef.current !== globalSentenceIdx) {
+            lastIndexRef.current = globalSentenceIdx;
+            setAudioSentenceIndex(globalSentenceIdx);
+          }
           
           const wordCues = cues[nextCueIndex].wordCues || [];
           let activeWordIdx = -1;
@@ -229,7 +248,7 @@ export function AudiobookPlayer() {
       setCurrentIndex(nextIdx);
       const current = audioUrlsRef.current;
       if (nextIdx < current.length) {
-        playUrlAtIndex(current, nextIdx);
+        playUrlRef.current(current, nextIdx);
       } else {
         pendingAdvance.current = true;
         setWaitingForNext(true);
@@ -250,14 +269,97 @@ export function AudiobookPlayer() {
       .then(() => {
         setCurrentIndex(idx);
         setAudioPlaying(true);
-        setAudioSentenceIndex(sentenceOffset);
+        const startIdx = initialSentenceIdx !== undefined ? initialSentenceIdx : 0;
+        const globalSentenceIdx = sentenceOffset + startIdx;
+        lastIndexRef.current = globalSentenceIdx;
+        setAudioSentenceIndex(globalSentenceIdx);
         setAudioWordIndex(-1);
         if (setCurrentChapterIndex) {
           setCurrentChapterIndex(chapterIndex);
         }
       })
       .catch(() => setError("Unable to start playback"));
-  }
+  }, [book, setAudioPlaying, setAudioSentenceIndex, setAudioWordIndex, setCurrentChapterIndex]);
+
+  useEffect(() => {
+    playUrlRef.current = playUrlAtIndex;
+  }, [playUrlAtIndex]);
+
+  const getPartForSentenceIndex = useCallback((targetIdx: number) => {
+    if (!book) return null;
+    
+    const current = audioUrlsRef.current;
+    
+    let offset = 0;
+    for (let idx = 0; idx < current.length; idx++) {
+      const url = current[idx];
+      const filename = url.split("/").pop() || "";
+      const match = filename.match(/chapter-(.+?)-part-(\d+)\.wav/i);
+      
+      let chIdx = idx;
+      let pIdx: number | null = null;
+      
+      if (match) {
+        const chId = match[1];
+        pIdx = parseInt(match[2], 10);
+        const foundIdx = book.chapters.findIndex((ch) => ch.id === chId);
+        if (foundIdx !== -1) chIdx = foundIdx;
+      }
+      
+      let content = "";
+      if (pIdx !== null) {
+        const chapterContent = book.chapters[chIdx]?.content || "";
+        const paragraphs = groupParagraphs(chapterContent);
+        content = paragraphs[pIdx] || "";
+      } else {
+        content = book.chapters[chIdx]?.content || "";
+      }
+      
+      const sMap = buildSentenceMap(content);
+      const sentenceCount = sMap.flat.length;
+      
+      if (targetIdx >= offset && targetIdx < offset + sentenceCount) {
+        return {
+          urlIndex: idx,
+          sentenceOffset: offset,
+          sentenceIndexInPart: targetIdx - offset,
+          content
+        };
+      }
+      offset += sentenceCount;
+    }
+    
+    return null;
+  }, [book]);
+
+  const seekToSentenceIndex = useCallback((targetIdx: number) => {
+    if (!book) return;
+    
+    const partInfo = getPartForSentenceIndex(targetIdx);
+    if (!partInfo) return;
+    
+    const currentUrls = audioUrlsRef.current;
+    
+    if (partInfo.urlIndex === currentIndex && audioRef.current) {
+      const targetCue = cuesRef.current[partInfo.sentenceIndexInPart];
+      if (targetCue) {
+        audioRef.current.currentTime = targetCue.startTime;
+        if (audioRef.current.paused) {
+          audioRef.current.play().then(() => setAudioPlaying(true)).catch(() => {});
+        }
+        lastIndexRef.current = targetIdx;
+        setAudioSentenceIndex(targetIdx);
+        setAudioWordIndex(-1);
+      }
+    } else {
+      playUrlRef.current(currentUrls, partInfo.urlIndex, partInfo.sentenceIndexInPart);
+    }
+  }, [book, currentIndex, getPartForSentenceIndex, setAudioPlaying, setAudioSentenceIndex, setAudioWordIndex]);
+
+  useEffect(() => {
+    if (audioSentenceIndex === lastIndexRef.current) return;
+    seekToSentenceIndex(audioSentenceIndex);
+  }, [audioSentenceIndex, seekToSentenceIndex]);
 
   // ── Job lifecycle ─────────────────────────────────────────────
 
@@ -367,7 +469,7 @@ export function AudiobookPlayer() {
       if (pendingAdvance.current || shouldAutoplay) {
         pendingAdvance.current = false;
         setWaitingForNext(false);
-        playUrlAtIndex(merged, currentUrls.length);
+        playUrlRef.current(merged, currentUrls.length);
       }
     }
 
@@ -389,10 +491,11 @@ export function AudiobookPlayer() {
       }
       return;
     }
-    // Start from beginning
     const current = audioUrlsRef.current;
-    if (current.length > 0) playUrlAtIndex(current, 0);
-  }, [setAudioPlaying]);
+    if (current.length > 0) {
+      seekToSentenceIndex(audioSentenceIndex);
+    }
+  }, [setAudioPlaying, audioSentenceIndex, seekToSentenceIndex]);
 
   const handleClose = useCallback(() => {
     clearPoll();

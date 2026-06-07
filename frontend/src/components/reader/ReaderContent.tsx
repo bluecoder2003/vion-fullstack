@@ -579,6 +579,11 @@ export function ReaderContent() {
               <span
                 key={globalIdx}
                 data-sentence-idx={globalIdx}
+                onClick={() => {
+                  if (isAudioMode) {
+                    setAudioSentenceIndex(globalIdx);
+                  }
+                }}
                 style={{
                   backgroundColor: bgColor,
                   borderRadius: isActiveSentence || sentenceHighlightColor ? 3 : 0,
@@ -586,6 +591,7 @@ export function ReaderContent() {
                   transition: "background-color 0.35s ease",
                   boxDecorationBreak: "clone" as React.CSSProperties["boxDecorationBreak"],
                   WebkitBoxDecorationBreak: "clone",
+                  cursor: isAudioMode ? "pointer" : "inherit",
                 }}
               >
                 {content}

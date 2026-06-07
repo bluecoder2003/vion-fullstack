@@ -44,6 +44,7 @@ export function AudiobookPlayer() {
     audioPlaying,
     setAudioPlaying,
     setAudioSentenceIndex,
+    setAudioWordIndex,
     setCurrentChapterIndex,
   } = useReader();
 
@@ -106,6 +107,21 @@ export function AudiobookPlayer() {
     }
   }
 
+  const fetchWordTimestamps = async (relPath: string): Promise<any[] | null> => {
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/api/word-timestamps/${relPath}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+      return null;
+    } catch (err) {
+      console.warn("Could not fetch Whisper timestamps, falling back to estimation:", err);
+      return null;
+    }
+  };
+
   function playUrlAtIndex(urls: string[], idx: number) {
     destroyAudio();
     const url = urls[idx];
@@ -114,7 +130,7 @@ export function AudiobookPlayer() {
     const audio = new Audio(url);
     audioRef.current = audio;
 
-    let cues: { startTime: number; sentenceIndex: number }[] = [];
+    let cues: SentenceCue[] = [];
 
     // Parse paragraph details from paragraph-level file names
     const filename = url.split("/").pop() || "";
@@ -147,7 +163,13 @@ export function AudiobookPlayer() {
       }
     }
 
-    audio.addEventListener("loadedmetadata", () => {
+    // Start fetching word-level timestamps immediately if generated
+    const isGenerated = url.includes("/tts/");
+    const ttsIndex = url.indexOf("/tts/");
+    const relativePath = ttsIndex !== -1 ? url.substring(ttsIndex + 5) : "";
+    const timestampsPromise = isGenerated && relativePath ? fetchWordTimestamps(relativePath) : Promise.resolve(null);
+
+    audio.addEventListener("loadedmetadata", async () => {
       let content = "";
       if (paraIndex !== null) {
         const chapterContent = book?.chapters[chapterIndex]?.content || "";
@@ -157,23 +179,17 @@ export function AudiobookPlayer() {
         content = book?.chapters[chapterIndex]?.content || "";
       }
 
-      if (content && audio.duration) {
-        const sentenceMap = buildSentenceMap(content);
-        const sentences = sentenceMap.flat;
-        if (sentences.length > 0) {
-          const weights = sentences.map((text) => {
-            const words = text.split(/\s+/).filter(Boolean).length;
-            const pauses = (text.match(/[,:;—-]/g) || []).length;
-            return 8 + words * 1.35 + pauses * 1.75;
-          });
-          const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-          let cumulativeWeight = 0;
-          cues = sentences.map((_, index) => {
-            const startTime = (cumulativeWeight / totalWeight) * audio.duration;
-            cumulativeWeight += weights[index];
-            return { startTime, sentenceIndex: index };
-          });
-        }
+      if (!content || !audio.duration) return;
+
+      const sentenceMap = buildSentenceMap(content);
+      const sentences = sentenceMap.flat;
+      if (sentences.length === 0) return;
+
+      const whisperWords = await timestampsPromise;
+      if (whisperWords && whisperWords.length > 0) {
+        cues = alignSentencesWithWhisper(sentences, whisperWords, audio.duration);
+      } else {
+        cues = estimateSentenceAndWordCues(sentences, audio.duration);
       }
     });
 
@@ -185,12 +201,30 @@ export function AudiobookPlayer() {
         const nextCueIndex = findCueIndexForTime(cues, audio.currentTime);
         if (nextCueIndex >= 0) {
           setAudioSentenceIndex(sentenceOffset + cues[nextCueIndex].sentenceIndex);
+          
+          const wordCues = cues[nextCueIndex].wordCues || [];
+          let activeWordIdx = -1;
+          for (let w = 0; w < wordCues.length; w++) {
+            if (audio.currentTime >= wordCues[w].start && audio.currentTime <= wordCues[w].end) {
+              activeWordIdx = w;
+              break;
+            }
+          }
+          if (activeWordIdx === -1 && wordCues.length > 0) {
+            if (audio.currentTime >= wordCues[wordCues.length - 1].end) {
+              activeWordIdx = wordCues.length - 1;
+            } else if (audio.currentTime < wordCues[0].start) {
+              activeWordIdx = 0;
+            }
+          }
+          setAudioWordIndex(activeWordIdx);
         }
       }
     });
 
     audio.addEventListener("ended", () => {
       setPlaybackPct(0);
+      setAudioWordIndex(-1);
       const nextIdx = idx + 1;
       setCurrentIndex(nextIdx);
       const current = audioUrlsRef.current;
@@ -208,6 +242,7 @@ export function AudiobookPlayer() {
       setError("Audio playback failed or file not found");
       setAudioPlaying(false);
       setWaitingForNext(false);
+      setAudioWordIndex(-1);
     });
 
     audio
@@ -216,6 +251,7 @@ export function AudiobookPlayer() {
         setCurrentIndex(idx);
         setAudioPlaying(true);
         setAudioSentenceIndex(sentenceOffset);
+        setAudioWordIndex(-1);
         if (setCurrentChapterIndex) {
           setCurrentChapterIndex(chapterIndex);
         }
@@ -364,7 +400,8 @@ export function AudiobookPlayer() {
     cancelActiveJob();
     setAudioPlaying(false);
     setIsAudioMode(false);
-  }, [setAudioPlaying, setIsAudioMode, cancelActiveJob]);
+    setAudioWordIndex(-1);
+  }, [setAudioPlaying, setIsAudioMode, cancelActiveJob, setAudioWordIndex]);
 
   if (!book) return null;
 
@@ -489,4 +526,179 @@ function findCueIndexForTime(cues: { startTime: number }[], time: number): numbe
   }
 
   return best;
+}
+
+interface WordCue {
+  word: string;
+  start: number;
+  end: number;
+}
+
+interface SentenceCue {
+  startTime: number;
+  endTime: number;
+  sentenceIndex: number;
+  wordCues: WordCue[];
+}
+
+function normalizeWord(word: string): string {
+  return word.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function alignSentencesWithWhisper(
+  sentences: string[],
+  whisperWords: { word: string; start: number; end: number }[],
+  audioDuration: number
+): SentenceCue[] {
+  const sentenceWordsNormalized = sentences.map((s) =>
+    s.split(/\s+/).map(normalizeWord).filter(Boolean)
+  );
+  const whisperWordsNormalized = whisperWords.map((w) => normalizeWord(w.word));
+
+  let wIdx = 0;
+  const sentenceCues: SentenceCue[] = [];
+
+  for (let i = 0; i < sentences.length; i++) {
+    const sWords = sentenceWordsNormalized[i];
+    if (sWords.length === 0) {
+      const prevEndTime = sentenceCues[i - 1]?.endTime || 0;
+      sentenceCues.push({
+        startTime: prevEndTime,
+        endTime: prevEndTime,
+        sentenceIndex: i,
+        wordCues: [],
+      });
+      continue;
+    }
+
+    let sWordPointer = 0;
+    let currentWIdx = wIdx;
+    let lastMatchedWIdx = wIdx;
+
+    while (sWordPointer < sWords.length && currentWIdx < whisperWordsNormalized.length) {
+      const target = sWords[sWordPointer];
+      let found = false;
+      for (let win = 0; win < 5; win++) {
+        if (
+          currentWIdx + win < whisperWordsNormalized.length &&
+          whisperWordsNormalized[currentWIdx + win] === target
+        ) {
+          currentWIdx += win + 1;
+          sWordPointer++;
+          lastMatchedWIdx = currentWIdx - 1;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        sWordPointer++;
+      }
+    }
+
+    const startWordIdx = wIdx;
+    const endWordIdx = Math.max(wIdx, lastMatchedWIdx);
+
+    const slice = whisperWords.slice(startWordIdx, endWordIdx + 1);
+    const startTime = slice.length > 0 ? slice[0].start : (whisperWords[startWordIdx]?.start ?? 0);
+    const endTime = slice.length > 0 ? slice[slice.length - 1].end : (whisperWords[startWordIdx]?.end ?? audioDuration);
+
+    const wordCues: WordCue[] = [];
+    const rawWords = sentences[i].split(/\s+/).filter(Boolean);
+
+    let sliceIdx = 0;
+    for (let rwIdx = 0; rwIdx < rawWords.length; rwIdx++) {
+      const rwNorm = normalizeWord(rawWords[rwIdx]);
+      let matchedWord = null;
+      for (let look = 0; look < 4; look++) {
+        if (sliceIdx + look < slice.length) {
+          if (normalizeWord(slice[sliceIdx + look].word) === rwNorm) {
+            matchedWord = slice[sliceIdx + look];
+            sliceIdx += look + 1;
+            break;
+          }
+        }
+      }
+
+      if (matchedWord) {
+        wordCues.push({
+          word: rawWords[rwIdx],
+          start: matchedWord.start,
+          end: matchedWord.end,
+        });
+      } else {
+        const fractionStart = rwIdx / rawWords.length;
+        const fractionEnd = (rwIdx + 1) / rawWords.length;
+        wordCues.push({
+          word: rawWords[rwIdx],
+          start: startTime + fractionStart * (endTime - startTime),
+          end: startTime + fractionEnd * (endTime - startTime),
+        });
+      }
+    }
+
+    sentenceCues.push({
+      startTime,
+      endTime,
+      sentenceIndex: i,
+      wordCues,
+    });
+
+    wIdx = endWordIdx + 1;
+  }
+
+  return sentenceCues;
+}
+
+function estimateSentenceAndWordCues(sentences: string[], audioDuration: number): SentenceCue[] {
+  const weights = sentences.map((text) => {
+    const words = text.split(/\s+/).filter(Boolean).length;
+    const pauses = (text.match(/[,:;—-]/g) || []).length;
+    return 8 + words * 1.35 + pauses * 1.75;
+  });
+
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  let cumulativeWeight = 0;
+  const sentenceCues: SentenceCue[] = [];
+
+  for (let i = 0; i < sentences.length; i++) {
+    const startTime = (cumulativeWeight / totalWeight) * audioDuration;
+    cumulativeWeight += weights[i];
+    const endTime = (cumulativeWeight / totalWeight) * audioDuration;
+
+    const rawWords = sentences[i].split(/\s+/).filter(Boolean);
+    const duration = endTime - startTime;
+
+    const wordWeights = rawWords.map((w) => {
+      const charCount = w.replace(/[^a-zA-Z0-9]/g, "").length;
+      let weight = charCount + 3;
+      if (/[.,:;?!—-]/.test(w)) {
+        weight += 4;
+      }
+      return weight;
+    });
+
+    const totalWordWeight = wordWeights.reduce((sum, w) => sum + w, 0);
+    let currentWordStart = startTime;
+
+    const wordCues: WordCue[] = rawWords.map((word, wIdx) => {
+      const wDuration = totalWordWeight > 0 ? (wordWeights[wIdx] / totalWordWeight) * duration : duration / rawWords.length;
+      const wEnd = currentWordStart + wDuration;
+      const cue = {
+        word,
+        start: currentWordStart,
+        end: wEnd,
+      };
+      currentWordStart = wEnd;
+      return cue;
+    });
+
+    sentenceCues.push({
+      startTime,
+      endTime,
+      sentenceIndex: i,
+      wordCues,
+    });
+  }
+
+  return sentenceCues;
 }

@@ -37,6 +37,7 @@ export function ReaderContent() {
     audioPlaying,
     audioSentenceIndex,
     setAudioSentenceIndex,
+    audioWordIndex,
   } = useReader();
 
   const t = themes[theme];
@@ -509,27 +510,59 @@ export function ReaderContent() {
 
             let content: React.ReactNode = sentence;
 
-            for (const hl of chapterHighlights) {
-              if (sentence.includes(hl.text)) {
-                const parts = sentence.split(hl.text);
-                content = (
-                  <>
-                    {parts[0]}
+            if (isActiveSentence && audioWordIndex >= 0) {
+              // Word-by-word active sentence rendering
+              const words = sentence.split(/(\s+)/);
+              let wordCounter = 0;
+              content = words.map((word, wIdx) => {
+                const isWord = /\S/.test(word);
+                if (isWord) {
+                  const currentWordIdx = wordCounter;
+                  wordCounter++;
+                  const isCurrentWord = currentWordIdx === audioWordIndex;
+                  return (
                     <span
+                      key={wIdx}
                       style={{
-                        backgroundColor: `${hl.color}55`,
+                        backgroundColor: isCurrentWord ? `${t.accent}44` : "transparent",
+                        color: isCurrentWord ? t.accent : "inherit",
+                        fontWeight: isCurrentWord ? 600 : "inherit",
                         borderRadius: 2,
-                        padding: "1px 0",
-                        boxDecorationBreak: "clone" as React.CSSProperties["boxDecorationBreak"],
-                        WebkitBoxDecorationBreak: "clone",
+                        padding: "0 2px",
+                        transition: "all 0.15s ease",
                       }}
                     >
-                      {hl.text}
+                      {word}
                     </span>
-                    {parts.slice(1).join(hl.text)}
-                  </>
-                );
-                break;
+                  );
+                } else {
+                  return word;
+                }
+              });
+            } else {
+              // Standard static highlights rendering
+              for (const hl of chapterHighlights) {
+                if (sentence.includes(hl.text)) {
+                  const parts = sentence.split(hl.text);
+                  content = (
+                    <>
+                      {parts[0]}
+                      <span
+                        style={{
+                          backgroundColor: `${hl.color}55`,
+                          borderRadius: 2,
+                          padding: "1px 0",
+                          boxDecorationBreak: "clone" as React.CSSProperties["boxDecorationBreak"],
+                          WebkitBoxDecorationBreak: "clone",
+                        }}
+                      >
+                        {hl.text}
+                      </span>
+                      {parts.slice(1).join(hl.text)}
+                    </>
+                  );
+                  break;
+                }
               }
             }
 
@@ -563,7 +596,7 @@ export function ReaderContent() {
         </p>
       );
     });
-  }, [chapter, sentenceMap, chapterHighlights, isAudioMode, audioSentenceIndex, t.accent, t.text, t.border, book]);
+  }, [chapter, sentenceMap, chapterHighlights, isAudioMode, audioSentenceIndex, audioWordIndex, t.accent, t.text, t.border, book]);
 
   // ──────────────────────────────────────────────
   //  Early-exit

@@ -1,6 +1,7 @@
 import hashlib
 import io
 import wave
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,8 @@ from typing import Optional
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+logger = logging.getLogger("uvicorn.error")
 
 
 DEFAULT_KOKORO_VOICE = "af_heart"
@@ -356,6 +359,7 @@ def create_scene_demo_router(output_dir: Path) -> APIRouter:
             except HTTPException:
                 raise
             except Exception as exc:
+                logger.exception("Error in generate_scene_demo_tts:")
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {

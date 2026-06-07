@@ -532,14 +532,24 @@ function parseTextIntoChapters(
     if (matches[0].index > 500) {
       const preface = text.slice(0, matches[0].index).trim();
       if (preface.length > 100) {
-        chapters.unshift({
-          id: "preface",
-          title: "Preface",
-          page: 0,
-          content: preface,
-        });
-        // Re-number pages
-        chapters.forEach((ch, i) => (ch.page = i + 1));
+        // Avoid adding pure front matter (title, copyright, contents list) as preface
+        const lower = preface.toLowerCase();
+        const hasCopyright = lower.includes("copyright");
+        const hasContents = lower.includes("contents");
+        const hasProducedBy = lower.includes("produced by");
+        const sentenceCount = (preface.match(/[.!?]\s+[A-Z\d"“']/g) || []).length;
+        const isFrontMatter = (hasCopyright || hasContents || hasProducedBy) && sentenceCount < 3;
+
+        if (!isFrontMatter) {
+          chapters.unshift({
+            id: "preface",
+            title: "Preface",
+            page: 0,
+            content: preface,
+          });
+          // Re-number pages
+          chapters.forEach((ch, i) => (ch.page = i + 1));
+        }
       }
     }
   }

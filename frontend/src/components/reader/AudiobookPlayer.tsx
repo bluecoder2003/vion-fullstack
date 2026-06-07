@@ -3,13 +3,49 @@ import { Play, Pause, X, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
+import { buildSentenceMap } from "./audioUtils";
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8000";
 const POLL_MS = 2500;
 
+function groupParagraphs(text: string, minChars = 400): string[] {
+  const paras = text.split("\n\n").filter((p) => p.trim());
+  const grouped: string[] = [];
+  let current: string[] = [];
+  let currentLen = 0;
+
+  for (const p of paras) {
+    if (current.length > 0 && currentLen + p.length > minChars * 2.5) {
+      grouped.push(current.join("\n\n"));
+      current = [p];
+      currentLen = p.length;
+    } else if (currentLen >= minChars) {
+      grouped.push(current.join("\n\n"));
+      current = [p];
+      currentLen = p.length;
+    } else {
+      current.push(p);
+      currentLen += p.length;
+    }
+  }
+
+  if (current.length > 0) {
+    grouped.push(current.join("\n\n"));
+  }
+
+  return grouped;
+}
+
 export function AudiobookPlayer() {
-  const { book, theme, setIsAudioMode, audioPlaying, setAudioPlaying, setAudioSentenceIndex } =
-    useReader();
+  const {
+    book,
+    theme,
+    setIsAudioMode,
+    audioPlaying,
+    setAudioPlaying,
+    setAudioSentenceIndex,
+    setCurrentChapterIndex,
+  } = useReader();
 
   const t = themes[theme];
 
@@ -30,13 +66,30 @@ export function AudiobookPlayer() {
   // chapter hasn't finished generating yet. The polling loop clears this
   // and auto-plays as soon as the next URL arrives.
   const pendingAdvance = useRef(false);
+  const activeJobIdRef = useRef<string | null>(null);
+  const audioUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    audioUrlsRef.current = audioUrls;
+  }, [audioUrls]);
+
+  const cancelActiveJob = useCallback(() => {
+    const activeId = activeJobIdRef.current;
+    if (activeId) {
+      fetch(`${BACKEND_BASE_URL}/api/audiobook/${activeId}/cancel`, {
+        method: "POST",
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
       clearPoll();
       destroyAudio();
+      cancelActiveJob();
     };
-  }, []);
+  }, [cancelActiveJob]);
 
   function clearPoll() {
     if (pollRef.current) {
@@ -61,25 +114,100 @@ export function AudiobookPlayer() {
     const audio = new Audio(url);
     audioRef.current = audio;
 
+    let cues: { startTime: number; sentenceIndex: number }[] = [];
+
+    // Parse paragraph details from paragraph-level file names
+    const filename = url.split("/").pop() || "";
+    const match = filename.match(/chapter-(.+?)-part-(\d+)\.wav/i);
+
+    let chapterIndex = idx;
+    let paraIndex: number | null = null;
+
+    if (match) {
+      const chId = match[1];
+      paraIndex = parseInt(match[2], 10);
+      const foundIdx = book?.chapters.findIndex((ch) => ch.id === chId);
+      if (foundIdx !== undefined && foundIdx !== -1) {
+        chapterIndex = foundIdx;
+      }
+    }
+
+    // Calculate sentence offset within this chapter
+    let sentenceOffset = 0;
+    if (paraIndex !== null && book?.chapters[chapterIndex]) {
+      const chapterContent = book.chapters[chapterIndex].content || "";
+      const paragraphs = groupParagraphs(chapterContent);
+      const limit = Math.min(paraIndex, paragraphs.length);
+      for (let p = 0; p < limit; p++) {
+        const paraText = paragraphs[p];
+        if (paraText) {
+          const pMap = buildSentenceMap(paraText);
+          sentenceOffset += pMap.flat.length;
+        }
+      }
+    }
+
+    audio.addEventListener("loadedmetadata", () => {
+      let content = "";
+      if (paraIndex !== null) {
+        const chapterContent = book?.chapters[chapterIndex]?.content || "";
+        const paragraphs = groupParagraphs(chapterContent);
+        content = paragraphs[paraIndex] || "";
+      } else {
+        content = book?.chapters[chapterIndex]?.content || "";
+      }
+
+      if (content && audio.duration) {
+        const sentenceMap = buildSentenceMap(content);
+        const sentences = sentenceMap.flat;
+        if (sentences.length > 0) {
+          const weights = sentences.map((text) => {
+            const words = text.split(/\s+/).filter(Boolean).length;
+            const pauses = (text.match(/[,:;—-]/g) || []).length;
+            return 8 + words * 1.35 + pauses * 1.75;
+          });
+          const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+          let cumulativeWeight = 0;
+          cues = sentences.map((_, index) => {
+            const startTime = (cumulativeWeight / totalWeight) * audio.duration;
+            cumulativeWeight += weights[index];
+            return { startTime, sentenceIndex: index };
+          });
+        }
+      }
+    });
+
     audio.addEventListener("timeupdate", () => {
       if (!audio.duration || Number.isNaN(audio.duration)) return;
       setPlaybackPct((audio.currentTime / audio.duration) * 100);
+
+      if (cues.length > 0) {
+        const nextCueIndex = findCueIndexForTime(cues, audio.currentTime);
+        if (nextCueIndex >= 0) {
+          setAudioSentenceIndex(sentenceOffset + cues[nextCueIndex].sentenceIndex);
+        }
+      }
     });
 
     audio.addEventListener("ended", () => {
       setPlaybackPct(0);
       const nextIdx = idx + 1;
       setCurrentIndex(nextIdx);
-      setAudioUrls((current) => {
-        if (nextIdx < current.length) {
-          playUrlAtIndex(current, nextIdx);
-        } else {
-          pendingAdvance.current = true;
-          setWaitingForNext(true);
-          setAudioPlaying(false);
-        }
-        return current;
-      });
+      const current = audioUrlsRef.current;
+      if (nextIdx < current.length) {
+        playUrlAtIndex(current, nextIdx);
+      } else {
+        pendingAdvance.current = true;
+        setWaitingForNext(true);
+        setAudioPlaying(false);
+      }
+    });
+
+    audio.addEventListener("error", (e) => {
+      console.error("Audio playback/load error:", e);
+      setError("Audio playback failed or file not found");
+      setAudioPlaying(false);
+      setWaitingForNext(false);
     });
 
     audio
@@ -87,7 +215,10 @@ export function AudiobookPlayer() {
       .then(() => {
         setCurrentIndex(idx);
         setAudioPlaying(true);
-        setAudioSentenceIndex(0);
+        setAudioSentenceIndex(sentenceOffset);
+        if (setCurrentChapterIndex) {
+          setCurrentChapterIndex(chapterIndex);
+        }
       })
       .catch(() => setError("Unable to start playback"));
   }
@@ -127,20 +258,23 @@ export function AudiobookPlayer() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          book_id: book.id,
-          title: book.title,
-          author: book.author,
+          book_id: String(book.id || ""),
+          title: Array.isArray(book.title) ? book.title.join(", ") : String(book.title || ""),
+          author: Array.isArray(book.author) ? book.author.join(", ") : String(book.author || ""),
           voice: "af_heart",
-          chapters: book.chapters.map((ch) => ({
-            id: ch.id,
-            title: ch.title,
-            page: ch.page,
-            content: ch.content,
+          chapters: (book.chapters || []).map((ch) => ({
+            id: String(ch.id || ""),
+            title: Array.isArray(ch.title) ? ch.title.join(", ") : String(ch.title || ""),
+            page: typeof ch.page === "number" ? ch.page : undefined,
+            content: String(ch.content || ""),
           })),
         }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
+      if (data.job_id) {
+        activeJobIdRef.current = data.job_id;
+      }
       applyUpdate(data);
       if (data.status !== "complete" && data.status !== "error") {
         beginPolling(data.job_id as string);
@@ -155,6 +289,7 @@ export function AudiobookPlayer() {
 
   function beginPolling(jobId: string) {
     if (pollRef.current) return;
+    activeJobIdRef.current = jobId;
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${BACKEND_BASE_URL}/api/audiobook/${jobId}/status`);
@@ -188,15 +323,16 @@ export function AudiobookPlayer() {
     }
 
     if (incoming.length > 0) {
-      setAudioUrls((prev) => {
-        const merged = [...prev, ...incoming];
-        if (pendingAdvance.current) {
-          pendingAdvance.current = false;
-          setWaitingForNext(false);
-          playUrlAtIndex(merged, prev.length);
-        }
-        return merged;
-      });
+      const currentUrls = audioUrlsRef.current;
+      const merged = [...currentUrls, ...incoming];
+      const shouldAutoplay = currentUrls.length === 0 && merged.length > 0;
+      setAudioUrls(merged);
+
+      if (pendingAdvance.current || shouldAutoplay) {
+        pendingAdvance.current = false;
+        setWaitingForNext(false);
+        playUrlAtIndex(merged, currentUrls.length);
+      }
     }
 
     if (data.error) setError(data.error);
@@ -218,18 +354,17 @@ export function AudiobookPlayer() {
       return;
     }
     // Start from beginning
-    setAudioUrls((current) => {
-      if (current.length > 0) playUrlAtIndex(current, 0);
-      return current;
-    });
+    const current = audioUrlsRef.current;
+    if (current.length > 0) playUrlAtIndex(current, 0);
   }, [setAudioPlaying]);
 
   const handleClose = useCallback(() => {
     clearPoll();
     destroyAudio();
+    cancelActiveJob();
     setAudioPlaying(false);
     setIsAudioMode(false);
-  }, [setAudioPlaying, setIsAudioMode]);
+  }, [setAudioPlaying, setIsAudioMode, cancelActiveJob]);
 
   if (!book) return null;
 
@@ -336,4 +471,22 @@ export function AudiobookPlayer() {
       </div>
     </motion.div>
   );
+}
+
+function findCueIndexForTime(cues: { startTime: number }[], time: number): number {
+  let low = 0;
+  let high = cues.length - 1;
+  let best = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (cues[mid].startTime <= time) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
 }

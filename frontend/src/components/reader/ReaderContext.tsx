@@ -8,6 +8,11 @@ export interface Chapter {
   title: string;
   page: number;
   content: string;
+  paragraphs?: {
+    sentences: string[];
+    isSpecial?: boolean;
+    rawText: string;
+  }[];
 }
 
 export interface Highlight {

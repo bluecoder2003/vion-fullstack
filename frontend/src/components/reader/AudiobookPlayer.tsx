@@ -3,7 +3,7 @@ import { Play, Pause, X, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
-import { buildSentenceMap } from "./audioUtils";
+import { buildSentenceMap, isSpecialParagraph } from "./audioUtils";
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8000";
 const POLL_MS = 2500;
@@ -15,6 +15,9 @@ function groupParagraphs(text: string, minChars = 400): string[] {
   let currentLen = 0;
 
   for (const p of paras) {
+    if (isSpecialParagraph(p)) {
+      continue;
+    }
     if (current.length > 0 && currentLen + p.length > minChars * 2.5) {
       grouped.push(current.join("\n\n"));
       current = [p];
@@ -36,9 +39,42 @@ function groupParagraphs(text: string, minChars = 400): string[] {
   return grouped;
 }
 
+function groupParagraphItems(
+  paragraphs: { sentences: string[]; isSpecial?: boolean; rawText: string }[],
+  minChars = 400
+): { sentences: string[]; isSpecial?: boolean; rawText: string }[][] {
+  const grouped: { sentences: string[]; isSpecial?: boolean; rawText: string }[][] = [];
+  let current: { sentences: string[]; isSpecial?: boolean; rawText: string }[] = [];
+  let currentLen = 0;
+
+  for (const p of paragraphs) {
+    if (p.isSpecial) continue;
+    const pLen = p.rawText.length;
+    if (current.length > 0 && currentLen + pLen > minChars * 2.5) {
+      grouped.push(current);
+      current = [p];
+      currentLen = pLen;
+    } else if (currentLen >= minChars) {
+      grouped.push(current);
+      current = [p];
+      currentLen = pLen;
+    } else {
+      current.push(p);
+      currentLen += pLen;
+    }
+  }
+
+  if (current.length > 0) {
+    grouped.push(current);
+  }
+
+  return grouped;
+}
+
 export function AudiobookPlayer() {
   const {
     book,
+    setBook,
     theme,
     setIsAudioMode,
     audioPlaying,
@@ -46,6 +82,7 @@ export function AudiobookPlayer() {
     audioSentenceIndex,
     setAudioSentenceIndex,
     setAudioWordIndex,
+    currentChapterIndex,
     setCurrentChapterIndex,
   } = useReader();
 
@@ -156,14 +193,25 @@ export function AudiobookPlayer() {
     // Calculate sentence offset within this chapter
     let sentenceOffset = 0;
     if (paraIndex !== null && book?.chapters[chapterIndex]) {
-      const chapterContent = book.chapters[chapterIndex].content || "";
-      const paragraphs = groupParagraphs(chapterContent);
-      const limit = Math.min(paraIndex, paragraphs.length);
-      for (let p = 0; p < limit; p++) {
-        const paraText = paragraphs[p];
-        if (paraText) {
-          const pMap = buildSentenceMap(paraText);
-          sentenceOffset += pMap.flat.length;
+      const ch = book.chapters[chapterIndex];
+      if (ch.paragraphs) {
+        const groupedParts = groupParagraphItems(ch.paragraphs);
+        const limit = Math.min(paraIndex, groupedParts.length);
+        for (let p = 0; p < limit; p++) {
+          for (const para of groupedParts[p]) {
+            sentenceOffset += para.sentences.length;
+          }
+        }
+      } else {
+        const chapterContent = ch.content || "";
+        const paragraphs = groupParagraphs(chapterContent);
+        const limit = Math.min(paraIndex, paragraphs.length);
+        for (let p = 0; p < limit; p++) {
+          const paraText = paragraphs[p];
+          if (paraText) {
+            const pMap = buildSentenceMap(paraText);
+            sentenceOffset += pMap.flat.length;
+          }
         }
       }
     }
@@ -175,20 +223,29 @@ export function AudiobookPlayer() {
     const timestampsPromise = isGenerated && relativePath ? fetchWordTimestamps(relativePath) : Promise.resolve(null);
 
     audio.addEventListener("loadedmetadata", async () => {
-      let content = "";
-      if (paraIndex !== null) {
-        const chapterContent = book?.chapters[chapterIndex]?.content || "";
-        const paragraphs = groupParagraphs(chapterContent);
-        content = paragraphs[paraIndex] || "";
-      } else {
-        content = book?.chapters[chapterIndex]?.content || "";
+      if (audioRef.current !== audio) return;
+
+      let sentences: string[] = [];
+      if (paraIndex !== null && book?.chapters[chapterIndex]) {
+        const chapter = book.chapters[chapterIndex];
+        if (chapter.paragraphs) {
+          const groupedParts = groupParagraphItems(chapter.paragraphs);
+          const partParas = groupedParts[paraIndex] || [];
+          sentences = partParas.flatMap((p) => p.sentences);
+        } else {
+          const chapterContent = chapter.content || "";
+          const paragraphs = groupParagraphs(chapterContent);
+          const content = paragraphs[paraIndex] || "";
+          const sentenceMap = buildSentenceMap(content);
+          sentences = sentenceMap.flat;
+        }
+      } else if (book?.chapters[chapterIndex]) {
+        const chapter = book.chapters[chapterIndex];
+        const sentenceMap = buildSentenceMap(chapter.content || "", chapter.paragraphs);
+        sentences = sentenceMap.flat;
       }
 
-      if (!content || !audio.duration) return;
-
-      const sentenceMap = buildSentenceMap(content);
-      const sentences = sentenceMap.flat;
-      if (sentences.length === 0) return;
+      if (sentences.length === 0 || !audio.duration) return;
 
       const whisperWords = await timestampsPromise;
       if (whisperWords && whisperWords.length > 0) {
@@ -209,6 +266,8 @@ export function AudiobookPlayer() {
     });
 
     audio.addEventListener("timeupdate", () => {
+      if (audioRef.current !== audio) return;
+
       if (!audio.duration || Number.isNaN(audio.duration)) return;
       setPlaybackPct((audio.currentTime / audio.duration) * 100);
 
@@ -242,6 +301,8 @@ export function AudiobookPlayer() {
     });
 
     audio.addEventListener("ended", () => {
+      if (audioRef.current !== audio) return;
+
       setPlaybackPct(0);
       setAudioWordIndex(-1);
       const nextIdx = idx + 1;
@@ -257,6 +318,8 @@ export function AudiobookPlayer() {
     });
 
     audio.addEventListener("error", (e) => {
+      if (audioRef.current !== audio) return;
+
       console.error("Audio playback/load error:", e);
       setError("Audio playback failed or file not found");
       setAudioPlaying(false);
@@ -285,10 +348,14 @@ export function AudiobookPlayer() {
     playUrlRef.current = playUrlAtIndex;
   }, [playUrlAtIndex]);
 
-  const getPartForSentenceIndex = useCallback((targetIdx: number) => {
+  const getPartForChapterSentenceIndex = useCallback((chapterIndex: number, sentenceIndex: number) => {
     if (!book) return null;
     
     const current = audioUrlsRef.current;
+    const targetChapter = book.chapters[chapterIndex];
+    if (!targetChapter) return null;
+    
+    const targetChId = targetChapter.id;
     
     let offset = 0;
     for (let idx = 0; idx < current.length; idx++) {
@@ -298,35 +365,52 @@ export function AudiobookPlayer() {
       
       let chIdx = idx;
       let pIdx: number | null = null;
+      let isTargetChapter = false;
       
       if (match) {
         const chId = match[1];
         pIdx = parseInt(match[2], 10);
         const foundIdx = book.chapters.findIndex((ch) => ch.id === chId);
         if (foundIdx !== -1) chIdx = foundIdx;
-      }
-      
-      let content = "";
-      if (pIdx !== null) {
-        const chapterContent = book.chapters[chIdx]?.content || "";
-        const paragraphs = groupParagraphs(chapterContent);
-        content = paragraphs[pIdx] || "";
+        isTargetChapter = (chId === targetChId);
       } else {
-        content = book.chapters[chIdx]?.content || "";
+        // Pre-recorded audio fallback
+        isTargetChapter = (idx === chapterIndex);
       }
       
-      const sMap = buildSentenceMap(content);
-      const sentenceCount = sMap.flat.length;
-      
-      if (targetIdx >= offset && targetIdx < offset + sentenceCount) {
-        return {
-          urlIndex: idx,
-          sentenceOffset: offset,
-          sentenceIndexInPart: targetIdx - offset,
-          content
-        };
+      if (isTargetChapter) {
+        let sentenceCount = 0;
+        let content = "";
+        const ch = book.chapters[chIdx];
+        if (pIdx !== null) {
+          if (ch.paragraphs) {
+            const groupedParts = groupParagraphItems(ch.paragraphs);
+            const partParas = groupedParts[pIdx] || [];
+            sentenceCount = partParas.flatMap((p) => p.sentences).length;
+            content = partParas.map((p) => p.rawText).join("\n\n");
+          } else {
+            const chapterContent = ch.content || "";
+            const paragraphs = groupParagraphs(chapterContent);
+            content = paragraphs[pIdx] || "";
+            const sMap = buildSentenceMap(content);
+            sentenceCount = sMap.flat.length;
+          }
+        } else {
+          content = ch.content || "";
+          const sMap = buildSentenceMap(content, ch.paragraphs);
+          sentenceCount = sMap.flat.length;
+        }
+        
+        if (sentenceIndex >= offset && sentenceIndex < offset + sentenceCount) {
+          return {
+            urlIndex: idx,
+            sentenceOffset: offset,
+            sentenceIndexInPart: sentenceIndex - offset,
+            content
+          };
+        }
+        offset += sentenceCount;
       }
-      offset += sentenceCount;
     }
     
     return null;
@@ -335,7 +419,7 @@ export function AudiobookPlayer() {
   const seekToSentenceIndex = useCallback((targetIdx: number) => {
     if (!book) return;
     
-    const partInfo = getPartForSentenceIndex(targetIdx);
+    const partInfo = getPartForChapterSentenceIndex(currentChapterIndex, targetIdx);
     if (!partInfo) return;
     
     const currentUrls = audioUrlsRef.current;
@@ -354,7 +438,7 @@ export function AudiobookPlayer() {
     } else {
       playUrlRef.current(currentUrls, partInfo.urlIndex, partInfo.sentenceIndexInPart);
     }
-  }, [book, currentIndex, getPartForSentenceIndex, setAudioPlaying, setAudioSentenceIndex, setAudioWordIndex]);
+  }, [book, currentIndex, currentChapterIndex, getPartForChapterSentenceIndex, setAudioPlaying, setAudioSentenceIndex, setAudioWordIndex]);
 
   useEffect(() => {
     if (audioSentenceIndex === lastIndexRef.current) return;
@@ -446,10 +530,31 @@ export function AudiobookPlayer() {
     ready_files: string[];
     total: number;
     error?: string | null;
+    chapters?: any[];
   }) {
     setJobStatus(data.status as any);
     setTotalChapters(data.total);
     setReadyCount(data.ready_files.length);
+
+    if (data.chapters) {
+      setBook((prevBook) => {
+        if (!prevBook) return prevBook;
+        const updatedChapters = prevBook.chapters.map((ch) => {
+          const backendCh = data.chapters?.find((bc: any) => bc.id === ch.id);
+          if (backendCh) {
+            return { ...ch, paragraphs: backendCh.paragraphs };
+          }
+          return ch;
+        });
+        const hasChanged = updatedChapters.some(
+          (ch, idx) => ch.paragraphs !== prevBook.chapters[idx].paragraphs
+        );
+        if (hasChanged) {
+          return { ...prevBook, chapters: updatedChapters };
+        }
+        return prevBook;
+      });
+    }
 
     const incoming: string[] = [];
     for (const f of data.ready_files) {

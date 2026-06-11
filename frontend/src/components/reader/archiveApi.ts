@@ -488,7 +488,7 @@ function parseTextIntoChapters(
 
   // Try to detect chapter breaks
   const chapterRegex =
-    /^(CHAPTER|Chapter|chapter|BOOK|Book|PART|Part|LETTER|Letter|ACT|Act|VOLUME|Volume|CANTO|Canto|SCENE|Scene|SECTION|Section|STAVE|Stave)\s+[IVXLCDM\d]+[.:\s—\-]*/gm;
+    /^(CHAPTER|Chapter|chapter|BOOK|Book|PART|Part|LETTER|Letter|ACT|Act|VOLUME|Volume|CANTO|Canto|SCENE|Scene|SECTION|Section|STAVE|Stave)[ \t]+[IVXLCDM\d]+[.: \t—\-]*/gm;
 
   const matches: { index: number; heading: string }[] = [];
   let match;

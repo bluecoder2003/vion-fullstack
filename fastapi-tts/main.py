@@ -19,13 +19,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from openai import OpenAI
 from pydantic import BaseModel
 from scene_demo_tts import (
     create_scene_demo_router,
     generate_emotional_wav_chunks,
     write_emotional_wav_file,
     write_kokoro_wav_file,
+    write_emotional_wav_file_with_timestamps,
+    split_sentences,
 )
 
 
@@ -58,54 +59,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy-key-not-set"))
-
 # expose generated audio files
 app.mount("/tts", StaticFiles(directory=str(OUTPUT_DIR)), name="tts")
 app.include_router(create_scene_demo_router(OUTPUT_DIR))
-
-
-# ─────────────────────────────────────────────────────────────
-# AUDIO → TRANSCRIBE → EMOTIONAL TTS
-# ─────────────────────────────────────────────────────────────
-
-@app.post("/api/tts")
-async def tts(audio: UploadFile = File(...), emotion: str = Form("neutral")):
-    try:
-        if not audio.filename:
-            raise HTTPException(status_code=400, detail="Invalid audio file")
-
-        file_path = UPLOAD_DIR / audio.filename
-
-        with open(file_path, "wb") as buffer:
-            buffer.write(await audio.read())
-
-        # transcription
-        with open(file_path, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-            )
-
-        spoken_text = transcription.text
-
-        if not spoken_text.strip():
-            raise HTTPException(status_code=400, detail="Empty transcription")
-
-        voice = "af_nicole" if emotion.lower() in {"anger", "angry", "shout"} else "af_heart"
-        output_file = OUTPUT_DIR / f"converted-{int(time.time())}.wav"
-        write_kokoro_wav_file(spoken_text, voice, output_file)
-
-        return {
-            "success": True,
-            "file": output_file.name,
-            "transcription": spoken_text,
-        }
-
-    except Exception as e:
-        logger.exception("Error in /api/tts:")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -317,6 +273,32 @@ def _select_preview_chapters(chapters: list[Chapter]) -> list[Chapter]:
     ]
 
 
+def is_special_paragraph(text: str) -> bool:
+    trimmed = text.strip()
+    if not trimmed:
+        return True
+    # Strip surrounding underscores/asterisks that Gutenberg uses for formatting
+    trimmed = trimmed.strip("_* \t\n\r")
+    # Illustration/Frontispiece/Image/Cover Art
+    if re.match(r"^\[illustration\b", trimmed, re.IGNORECASE):
+        return True
+    if re.match(r"^\[frontispiece\b", trimmed, re.IGNORECASE):
+        return True
+    if re.match(r"^\[image\b", trimmed, re.IGNORECASE):
+        return True
+    if re.match(r"^\[cover art\]", trimmed, re.IGNORECASE):
+        return True
+    # Page numbers
+    if re.match(r"^\[page\s+\d+\]", trimmed, re.IGNORECASE):
+        return True
+    # Dividers like * * * or ---
+    if re.match(r"^\*[ \t*]*\*[ \t*]*\*", trimmed):
+        return True
+    if re.match(r"^[-_]{3,}$", trimmed):
+        return True
+    return False
+
+
 def _is_pride_and_prejudice_preview(book_id: str, title: str) -> bool:
     book_key = f"{book_id} {title}".lower()
     return "pride" in book_key and "prejudice" in book_key
@@ -357,10 +339,10 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
                 
             # Clean formatting, bracketed illustrations, cover art, and captions
             cleaned_content = chapter.content
-            cleaned_content = re.sub(r"\[Illustration:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-            cleaned_content = re.sub(r"\[Frontispiece:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-            cleaned_content = re.sub(r"\[Image:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-            cleaned_content = re.sub(r"\[[Cc]over [Aa]rt\]", "", cleaned_content)
+            cleaned_content = re.sub(r"\[Illustration\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+            cleaned_content = re.sub(r"\[Frontispiece\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+            cleaned_content = re.sub(r"\[Image\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+            cleaned_content = re.sub(r"\[Cover Art\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
             cleaned_content = cleaned_content.replace("_", "")
 
             raw_paragraphs = [
@@ -369,13 +351,15 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
                 if p.strip()
             ]
 
+            filtered_paragraphs = [p for p in raw_paragraphs if not is_special_paragraph(p)]
+
             # Group paragraphs to avoid tiny WAV files and transition gaps
             paragraphs = []
             current = []
             current_len = 0
             min_chars = 400
 
-            for p in raw_paragraphs:
+            for p in filtered_paragraphs:
                 if current and current_len + len(p) > min_chars * 2.5:
                     paragraphs.append("\n\n".join(current))
                     current = [p]
@@ -400,7 +384,7 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
                 
                 if not output_file.exists():
                     logger.info(f"[Job {job_id}] Synthesizing paragraph {para_idx + 1}/{len(paragraphs)} for chapter {chapter.id}...")
-                    write_emotional_wav_file(para, output_file)
+                    write_emotional_wav_file_with_timestamps(para, output_file)
                 else:
                     logger.info(f"[Job {job_id}] Paragraph part {part_filename} already exists, skipping synthesis.")
                 
@@ -421,6 +405,28 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
 # GENERATE AUDIOBOOK
 # ─────────────────────────────────────────────────────────────
 
+def get_chapter_paragraphs_structure(content: str) -> list[dict]:
+    raw_paras = [p.strip() for p in content.split("\n\n") if p.strip()]
+    paragraphs_struct = []
+    
+    for p in raw_paras:
+        if is_special_paragraph(p):
+            paragraphs_struct.append({
+                "sentences": [],
+                "isSpecial": True,
+                "rawText": p
+            })
+        else:
+            sentences = split_sentences(p)
+            paragraphs_struct.append({
+                "sentences": sentences,
+                "isSpecial": False,
+                "rawText": p
+            })
+            
+    return paragraphs_struct
+
+
 @app.post("/api/audiobook")
 async def generate_audiobook(payload: AudiobookRequest, background_tasks: BackgroundTasks):
 
@@ -439,6 +445,13 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
         c if c.isalnum() or c in ("-", "_") else "_"
         for c in payload.book_id
     )
+
+    response_chapters = []
+    for chapter in preview_chapters:
+        response_chapters.append({
+            "id": chapter.id,
+            "paragraphs": get_chapter_paragraphs_structure(chapter.content)
+        })
 
     # Check if there is already an active job for this safe_book_id
     existing_job_id = None
@@ -459,6 +472,7 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
             "book_id": payload.book_id,
             "title": payload.title,
             "author": payload.author,
+            "chapters": response_chapters,
         }
 
     job_id = f"job-{safe_book_id}-{int(time.time())}"
@@ -471,17 +485,18 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
             total_parts += 1
             continue
         cleaned_content = chapter.content
-        cleaned_content = re.sub(r"\[Illustration:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-        cleaned_content = re.sub(r"\[Frontispiece:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-        cleaned_content = re.sub(r"\[Image:[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
-        cleaned_content = re.sub(r"\[[Cc]over [Aa]rt\]", "", cleaned_content)
+        cleaned_content = re.sub(r"\[Illustration\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+        cleaned_content = re.sub(r"\[Frontispiece\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+        cleaned_content = re.sub(r"\[Image\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
+        cleaned_content = re.sub(r"\[Cover Art\b[^\]]*\]", "", cleaned_content, flags=re.IGNORECASE)
         cleaned_content = cleaned_content.replace("_", "")
         raw_paragraphs = [p.strip() for p in cleaned_content.split("\n\n") if p.strip()]
+        filtered_paragraphs = [p for p in raw_paragraphs if not is_special_paragraph(p)]
         paragraphs = []
         current = []
         current_len = 0
         min_chars = 400
-        for p in raw_paragraphs:
+        for p in filtered_paragraphs:
             if current and current_len + len(p) > min_chars * 2.5:
                 paragraphs.append("\n\n".join(current))
                 current = [p]
@@ -523,6 +538,7 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
         "book_id": payload.book_id,
         "title": payload.title,
         "author": payload.author,
+        "chapters": response_chapters,
     }
 
 
@@ -595,38 +611,13 @@ async def stream_audio(ws: WebSocket):
 @app.get("/api/word-timestamps/{filename:path}")
 async def get_word_timestamps(filename: str):
     """
-    Transcribe an audio file with Whisper word-level timestamps.
-    Result is cached as <filename>.timestamps.json alongside the audio file.
+    Serve pre-generated word-level timestamps JSON sidecar file.
     """
-    # Resolve paths safely (no directory traversal)
     cache_path = OUTPUT_DIR / f"{filename}.timestamps.json"
-    mp3_path = OUTPUT_DIR / filename
-
-    # Serve cached version if available
     if cache_path.exists():
         return json.loads(cache_path.read_text())
 
-    if not mp3_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-
-    try:
-        with open(mp3_path, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="verbose_json",
-                timestamp_granularities=["word"],
-            )
-
-        words = [
-            {"word": w.word, "start": w.start, "end": w.end}
-            for w in (transcription.words or [])
-        ]
-
-        # Cache to disk for subsequent requests
-        cache_path.write_text(json.dumps(words))
-        return words
-
-    except Exception as e:
-        logger.exception("Error in /api/word-timestamps:")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(
+        status_code=404, 
+        detail="Word timestamps not pre-generated for this file"
+    )

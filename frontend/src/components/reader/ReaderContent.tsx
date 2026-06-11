@@ -62,6 +62,8 @@ export function ReaderContent() {
    */
   const [spreadWidth, setSpreadWidth] = useState(0);
 
+  const [colOriginalPages, setColOriginalPages] = useState<(number | null)[]>([]);
+
   /*
    * hintColWidth – the CSS column-width value we REQUEST.
    */
@@ -71,9 +73,37 @@ export function ReaderContent() {
 
   // ── Sentence map (shared with AudioPlayer for identical indexing) ──
   const sentenceMap = useMemo(
-    () => (chapter ? buildSentenceMap(chapter.content) : null),
+    () => (chapter ? buildSentenceMap(chapter.content, chapter.paragraphs) : null),
     [chapter]
   );
+
+  const paragraphOriginalPages = useMemo(() => {
+    if (!sentenceMap) return [];
+    
+    // Find the first page marker in the chapter to use as a baseline
+    let firstPageNum: number | null = null;
+    for (const para of sentenceMap.paragraphs) {
+      if (para.isSpecial) {
+        const match = para.rawText.match(/^\[page\s+(\d+)\]/i);
+        if (match) {
+          firstPageNum = parseInt(match[1], 10);
+          break;
+        }
+      }
+    }
+    
+    let currentPageNum = firstPageNum !== null ? Math.max(1, firstPageNum - 1) : null;
+    
+    return sentenceMap.paragraphs.map((para) => {
+      if (para.isSpecial) {
+        const match = para.rawText.match(/^\[page\s+(\d+)\]/i);
+        if (match) {
+          currentPageNum = parseInt(match[1], 10);
+        }
+      }
+      return currentPageNum;
+    });
+  }, [sentenceMap]);
 
   // ──────────────────────────────────────────────
   //  1.  Compute the CSS column-width HINT
@@ -107,13 +137,12 @@ export function ReaderContent() {
     setSpreadIndex(0);
   }, [currentChapterIndex]);
 
-  useEffect(() => {
-    setCurrentPage(spreadIndex * 2 + 1);
-  }, [spreadIndex, setCurrentPage]);
+  const leftPageOriginal = colOriginalPages[spreadIndex * 2] ?? (spreadIndex * 2 + 1);
+  const rightPageOriginal = colOriginalPages[spreadIndex * 2 + 1] ?? Math.min(spreadIndex * 2 + 2, totalColumns);
 
-  // ──────────────────────────────────────────────
-  //  3.  MEASURE the actual column layout
-  // ──────────────────────────────────────────────
+  useEffect(() => {
+    setCurrentPage(leftPageOriginal);
+  }, [leftPageOriginal, setCurrentPage]);
 
   const measure = useCallback(() => {
     const container = columnsRef.current;
@@ -124,6 +153,7 @@ export function ReaderContent() {
       setTotalSpreads(1);
       setTotalColumns(1);
       setSpreadWidth(0);
+      setColOriginalPages([]);
       return;
     }
 
@@ -140,6 +170,7 @@ export function ReaderContent() {
       setSpreadWidth(sw);
       setTotalSpreads(1);
       setTotalColumns(1);
+      setColOriginalPages([]);
       return;
     }
 
@@ -149,10 +180,57 @@ export function ReaderContent() {
     const cols = lastColIdx + 1;
     const spreads = Math.max(1, Math.ceil(cols / 2));
 
+    // Calculate original page numbers per column
+    const childElems = Array.from(container.children) as HTMLElement[];
+    const colOriginals: (number | null)[] = new Array(cols).fill(null);
+    childElems.forEach((elem, pIdx) => {
+      const rects = elem.getClientRects();
+      if (rects.length === 0) return;
+      const rect = rects[0];
+      const elemLeft = rect.left - containerRect.left - PAD_X;
+      const elemColIdx = Math.max(0, Math.round(elemLeft / colSlot));
+      
+      const origPage = paragraphOriginalPages[pIdx];
+      if (origPage !== null && origPage !== undefined) {
+        if (elemColIdx < colOriginals.length) {
+          colOriginals[elemColIdx] = origPage;
+        }
+      }
+    });
+
+    // Fill forward
+    let lastPage: number | null = null;
+    for (let c = 0; c < colOriginals.length; c++) {
+      if (colOriginals[c] !== null) {
+        lastPage = colOriginals[c];
+      } else {
+        colOriginals[c] = lastPage;
+      }
+    }
+
+    // Fill backward
+    let firstKnownPage: number | null = null;
+    for (let c = 0; c < colOriginals.length; c++) {
+      if (colOriginals[c] !== null) {
+        firstKnownPage = colOriginals[c];
+        break;
+      }
+    }
+    if (firstKnownPage !== null) {
+      for (let c = 0; c < colOriginals.length; c++) {
+        if (colOriginals[c] === null) {
+          colOriginals[c] = Math.max(1, firstKnownPage - 1);
+        } else {
+          break;
+        }
+      }
+    }
+
     setSpreadWidth(sw);
     setTotalColumns(cols);
     setTotalSpreads(spreads);
-  }, []);
+    setColOriginalPages(colOriginals);
+  }, [paragraphOriginalPages]);
 
   useEffect(() => {
     if (!chapter) return;
@@ -396,8 +474,11 @@ export function ReaderContent() {
     let count = 0;
     for (let i = 0; i < currentChapterIndex; i++) {
       const content = book.chapters[i]?.content ?? "";
-      const matches = content.match(/^\[illustration\b/gim);
-      count += matches?.length ?? 0;
+      const matches = content.split("\n\n").filter(p => {
+        const t = p.trim();
+        return /^\[(illustration|frontispiece|image|cover art)\b/i.test(t);
+      });
+      count += matches.length;
     }
     return count;
   }, [book, currentChapterIndex]);
@@ -408,81 +489,131 @@ export function ReaderContent() {
     let illustIdx = illustStartIdx;
 
     return sentenceMap.paragraphs.map((para, pIdx) => {
-      // Reconstruct the raw paragraph text to detect illustration markers
-      const fullText = para.sentences.join(" ").trim();
+      if (para.isSpecial) {
+        const textToMatch = para.rawText;
+        if (/^\[(illustration|frontispiece|image|cover art)\b/i.test(textToMatch)) {
+          const descMatch = textToMatch.match(/^\[(?:illustration|frontispiece|image|cover art):?\s*(.*?)\]?\s*$/i);
+          const altText = descMatch?.[1]?.trim() ?? "Illustration";
+          const imgUrl = book?.illustrations?.[illustIdx];
+          illustIdx++;
 
-      if (/^\[illustration\b/i.test(fullText)) {
-        const descMatch = fullText.match(/^\[illustration:?\s*(.*?)\]?\s*$/i);
-        const altText = descMatch?.[1]?.trim() ?? "Illustration";
-        const imgUrl = book?.illustrations?.[illustIdx];
-        illustIdx++;
+          if (imgUrl) {
+            return (
+              <figure
+                key={pIdx}
+                style={{
+                  breakInside: "avoid",
+                  margin: "1.5em 0",
+                  textAlign: "center",
+                }}
+              >
+                <img
+                  src={imgUrl}
+                  alt={altText}
+                  loading="lazy"
+                  style={{
+                    maxWidth: "100%",
+                    height: "auto",
+                    borderRadius: 4,
+                    display: "block",
+                    margin: "0 auto",
+                  }}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                    e.currentTarget.nextElementSibling?.setAttribute(
+                      "data-load-failed",
+                      "1"
+                    );
+                  }}
+                />
+                {altText && (
+                  <figcaption
+                    style={{
+                      fontSize: "0.75em",
+                      fontStyle: "italic",
+                      opacity: 0.55,
+                      marginTop: 6,
+                      color: t.text,
+                    }}
+                  >
+                    {altText}
+                  </figcaption>
+                )}
+              </figure>
+            );
+          }
 
-        if (imgUrl) {
+          // No image URL — render a styled placeholder with the description
           return (
-            <figure
+            <div
               key={pIdx}
               style={{
                 breakInside: "avoid",
                 margin: "1.5em 0",
+                padding: "0.6em 1em",
+                borderRadius: 6,
+                border: `1px dashed ${t.border}`,
+                backgroundColor: `${t.border}22`,
+                fontSize: "0.8em",
+                fontStyle: "italic",
+                color: t.text,
+                opacity: 0.55,
                 textAlign: "center",
               }}
             >
-              <img
-                src={imgUrl}
-                alt={altText}
-                loading="lazy"
-                style={{
-                  maxWidth: "100%",
-                  height: "auto",
-                  borderRadius: 4,
-                  display: "block",
-                  margin: "0 auto",
-                }}
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                  e.currentTarget.nextElementSibling?.setAttribute(
-                    "data-load-failed",
-                    "1"
-                  );
-                }}
-              />
-              {altText && (
-                <figcaption
-                  style={{
-                    fontSize: "0.75em",
-                    fontStyle: "italic",
-                    opacity: 0.55,
-                    marginTop: 6,
-                    color: t.text,
-                  }}
-                >
-                  {altText}
-                </figcaption>
-              )}
-            </figure>
+              {altText || "Illustration"}
+            </div>
+          );
+        } else if (/^\*[ \t*]*\*[ \t*]*\*/.test(textToMatch) || /^[-_]{3,}$/.test(textToMatch)) {
+          return (
+            <div
+              key={pIdx}
+              style={{
+                textAlign: "center",
+                margin: "1.5em 0",
+                fontSize: "1.2em",
+                letterSpacing: "0.5em",
+                opacity: 0.5,
+                color: t.text,
+              }}
+            >
+              * * *
+            </div>
+          );
+        } else if (/^\[page\s+\d+\]/i.test(textToMatch)) {
+          const match = textToMatch.match(/^\[page\s+(\d+)\]/i);
+          const pageNum = match?.[1] ?? "";
+          return (
+            <div
+              key={pIdx}
+              style={{
+                textAlign: "center",
+                fontSize: "0.75em",
+                color: t.text,
+                opacity: 0.4,
+                margin: "1em 0",
+                userSelect: "none",
+              }}
+            >
+              Page {pageNum}
+            </div>
           );
         }
 
-        // No image URL — render a styled placeholder with the description
+        // Fallback for other special paragraphs
         return (
-          <div
+          <p
             key={pIdx}
+            className="mb-6 italic"
             style={{
-              breakInside: "avoid",
-              margin: "1.5em 0",
-              padding: "0.6em 1em",
-              borderRadius: 6,
-              border: `1px dashed ${t.border}`,
-              backgroundColor: `${t.border}22`,
-              fontSize: "0.8em",
-              fontStyle: "italic",
-              color: t.text,
-              opacity: 0.55,
-              textAlign: "center",
+              textAlign: "justify",
+              textIndent: pIdx > 0 ? "2em" : undefined,
+              lineHeight: 1.8,
+              opacity: 0.7,
             }}
           >
-            {altText || "Illustration"}
-          </div>
+            {para.rawText}
+          </p>
         );
       }
 
@@ -672,13 +803,17 @@ export function ReaderContent() {
           transition: "padding-bottom 0.25s ease",
         }}
       >
-        {totalSpreads > 1
-          ? leftPage === rightPage
-            ? `Page ${leftPage} of ${totalPageCount}`
-            : `Pages ${leftPage}\u2013${rightPage} of ${totalPageCount}`
-          : totalColumns > 1
-            ? `Pages 1\u20132 of ${totalPageCount}`
-            : "Page 1"}
+        {colOriginalPages.length > 0 && colOriginalPages[spreadIndex * 2] !== null && colOriginalPages[spreadIndex * 2] !== undefined
+          ? leftPageOriginal === rightPageOriginal
+            ? `Page ${leftPageOriginal}`
+            : `Pages ${leftPageOriginal}\u2013${rightPageOriginal}`
+          : totalSpreads > 1
+            ? leftPage === rightPage
+              ? `Page ${leftPage} of ${totalPageCount}`
+              : `Pages ${leftPage}\u2013${rightPage} of ${totalPageCount}`
+            : totalColumns > 1
+              ? `Pages 1\u20132 of ${totalPageCount}`
+              : "Page 1"}
       </div>
 
       {/* ── Navigation arrows ── */}

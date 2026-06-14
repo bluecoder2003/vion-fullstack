@@ -86,3 +86,83 @@ export const sampleBook: Book = {
     { id: "chapter-21", title: "Chapter 21", page: 84, content: letterContent4 },
   ],
 };
+
+export const soundscapePoemsBook: Book = {
+  id: "soundscape-poems-demo",
+  title: "Atmospheric Journeys (Soundscape Demo)",
+  author: "Antigravity AI",
+  totalPages: 5,
+  chapters: [
+    {
+      id: "poem-1",
+      title: "I. Hearth and Tempest",
+      page: 1,
+      content: `Outside, the frost-bound winter bites the wall,
+But inside, embers glow and shadows fall.
+The hearth is warm, the fireplace crackling bright,
+A cozy cabin bathing in the light.
+
+But look beyond—the sky is turning black,
+A sudden thunderclaps and lightning crack!
+The tempest rages, hurricane and gale,
+As heavy rain and storm clouds shroud the vale.`
+    },
+    {
+      id: "poem-2",
+      title: "II. Echoes of the Sea",
+      page: 2,
+      content: `A lonely vessel sailing on the tide,
+Where ocean waves and sea spray gently glide.
+The sandy beach, the coastal harbor bay,
+The rolling surf that sweeps the shore away.
+
+The blustery wind begins to howl and blow,
+A gusting breeze that drives the clouds below.
+It whips the sails, a cold and drafty gale,
+A freezing wind that sings a phantom tale.`
+    },
+    {
+      id: "poem-3",
+      title: "III. Forest Dawn",
+      page: 3,
+      content: `Awake! The morning rises soft and slow,
+A misty sunrise paints the world below.
+At dawn, the first light wakes the sleepy hills,
+As golden daybreak cures our earthly ills.
+
+Deep in the forest, green and wild and free,
+The birdsong echoes from the woodland tree.
+We walk the meadow path through grass and grove,
+Where woodland paths and forest spirits rove.`
+    },
+    {
+      id: "poem-4",
+      title: "IV. Flowing Waters",
+      page: 4,
+      content: `The crystal river winds its stony path,
+A rushing stream that sings of nature's wrath.
+The waterfall cascades into the pool,
+A flowing creek of waters fresh and cool.
+
+And now, a gentle drizzle starts to fall,
+A steady rain that patters over all.
+With no umbrella, drenched and soaked we stand,
+As rainy showers wash the thirsty land.`
+    },
+    {
+      id: "poem-5",
+      title: "V. City Night",
+      page: 5,
+      content: `The carriage rolls along the cobbled street,
+Where busy crowds of merchants laugh and meet.
+The tavern hums, the coach goes driving past,
+As city traffic moves both slow and fast.
+
+Then midnight falls, and starry lamps ignite,
+The moonlit stars adorn the silent night.
+Under the starry moon, the shadows creep,
+And dark night lullabies lulls the town to sleep.`
+    }
+  ]
+};
+

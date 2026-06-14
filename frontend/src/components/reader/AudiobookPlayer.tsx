@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Play, Pause, X, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
 import { buildSentenceMap, isSpecialParagraph } from "./audioUtils";
+import { AmbientEngine, detectScene, buildContextWindow, SceneHysteresis } from "./ambientSounds";
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8000";
 const POLL_MS = 2500;
@@ -84,9 +85,32 @@ export function AudiobookPlayer() {
     setAudioWordIndex,
     currentChapterIndex,
     setCurrentChapterIndex,
+    ambientMode,
+    ambientScene,
+    ambientVolume,
+    setAmbientVolume,
+    currentPlayingAmbient,
+    setCurrentPlayingAmbient,
   } = useReader();
 
   const t = themes[theme];
+
+  const chapter = book?.chapters[currentChapterIndex];
+  const sentenceMap = useMemo(
+    () => (chapter ? buildSentenceMap(chapter.content, chapter.paragraphs) : null),
+    [chapter]
+  );
+
+  const ambientEngineRef = useRef<AmbientEngine | null>(null);
+  const hysteresisRef = useRef<SceneHysteresis | null>(null);
+
+  const getAmbientEngine = useCallback(() => {
+    if (!ambientEngineRef.current) {
+      ambientEngineRef.current = new AmbientEngine();
+      hysteresisRef.current = new SceneHysteresis(2, 6);
+    }
+    return ambientEngineRef.current;
+  }, []);
 
   const [audioUrls, setAudioUrls] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -131,8 +155,77 @@ export function AudiobookPlayer() {
       clearPoll();
       destroyAudio();
       cancelActiveJob();
+      if (ambientEngineRef.current) {
+        ambientEngineRef.current.dispose();
+        ambientEngineRef.current = null;
+      }
     };
   }, [cancelActiveJob]);
+
+  // Sync ambient volume
+  useEffect(() => {
+    if (ambientEngineRef.current) {
+      ambientEngineRef.current.setVolume(ambientVolume);
+    }
+  }, [ambientVolume]);
+
+  // Sync ambient mode and state
+  useEffect(() => {
+    const engine = getAmbientEngine();
+    
+    if (ambientMode === "off") {
+      if (engine.running) {
+        engine.stop();
+      }
+      setCurrentPlayingAmbient("silence");
+    } else if (ambientMode === "manual") {
+      if (!engine.running) {
+        engine.start(ambientScene);
+      } else {
+        engine.transitionTo(ambientScene);
+      }
+      setCurrentPlayingAmbient(ambientScene);
+    } else if (ambientMode === "adaptive") {
+      if (audioPlaying) {
+        if (!engine.running) {
+          engine.start("indoor"); // default room tone
+        }
+      } else {
+        if (engine.running) {
+          engine.stop();
+        }
+        setCurrentPlayingAmbient("silence");
+      }
+    }
+  }, [ambientMode, ambientScene, audioPlaying, getAmbientEngine, setCurrentPlayingAmbient]);
+
+  // Dynamic ambient changes matching the narration sentence
+  useEffect(() => {
+    if (ambientMode !== "adaptive" || !audioPlaying || !sentenceMap || !sentenceMap.flat.length) {
+      return;
+    }
+
+    const engine = getAmbientEngine();
+    if (!engine.running) return;
+
+    // Get active sentence index
+    if (audioSentenceIndex < 0 || audioSentenceIndex >= sentenceMap.flat.length) return;
+
+    // Get context window text
+    const contextText = buildContextWindow(sentenceMap.flat, audioSentenceIndex, 9);
+    const detection = detectScene(contextText);
+    
+    // Stabilize transition using hysteresis
+    const stableScene = hysteresisRef.current ? hysteresisRef.current.update(detection.primary) : detection.primary;
+    
+    // Transition
+    engine.transitionTo(stableScene, detection.secondary, detection.secondaryWeight);
+    setCurrentPlayingAmbient(stableScene);
+
+    // Apply brief audio ducking to emphasize speech onset
+    engine.duck(0.55, 1.0);
+  }, [audioSentenceIndex, ambientMode, audioPlaying, sentenceMap, getAmbientEngine, setCurrentPlayingAmbient]);
+
 
   function clearPoll() {
     if (pollRef.current) {

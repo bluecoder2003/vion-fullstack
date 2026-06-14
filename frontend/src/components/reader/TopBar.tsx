@@ -139,7 +139,7 @@ export function TopBar({ onBack, musicOpen, onToggleMusic }: { onBack?: () => vo
             onClick={onToggleMusic}
             className="p-2 rounded-md transition-colors hover:opacity-70"
             style={{ color: musicOpen ? t.accent : t.toolbarText }}
-            title="Background Music"
+            title="Audio & Soundscape Settings"
           >
             <Music size={18} />
           </button>

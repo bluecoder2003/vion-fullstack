@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from "react";
 import type { VoiceProfile } from "./VoiceRecorder";
+import type { SceneType } from "./ambientSounds";
 
 export type ThemeType = "original" | "quiet" | "paper" | "bold" | "calm" | "focus";
 
@@ -8,6 +9,11 @@ export interface Chapter {
   title: string;
   page: number;
   content: string;
+  paragraphs?: {
+    sentences: string[];
+    isSpecial?: boolean;
+    rawText: string;
+  }[];
 }
 
 export interface Highlight {
@@ -85,6 +91,16 @@ interface ReaderContextType {
   setVoiceProfile: (profile: VoiceProfile | null) => void;
   activeVoiceType: "browser" | "openai" | "personal";
   setActiveVoiceType: (type: "browser" | "openai" | "personal") => void;
+
+  // ── Ambient soundscapes ──
+  ambientMode: "adaptive" | "manual" | "off";
+  setAmbientMode: (mode: "adaptive" | "manual" | "off") => void;
+  ambientScene: SceneType;
+  setAmbientScene: (scene: SceneType) => void;
+  ambientVolume: number;
+  setAmbientVolume: (vol: number) => void;
+  currentPlayingAmbient: SceneType;
+  setCurrentPlayingAmbient: (scene: SceneType) => void;
 }
 
 const ReaderContext = createContext<ReaderContextType | null>(null);
@@ -117,6 +133,12 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
   // Personal voice state
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
   const [activeVoiceType, setActiveVoiceType] = useState<"browser" | "openai" | "personal">("browser");
+
+  // Ambient soundscapes state
+  const [ambientMode, setAmbientMode] = useState<"adaptive" | "manual" | "off">("off");
+  const [ambientScene, setAmbientScene] = useState<SceneType>("indoor");
+  const [ambientVolume, setAmbientVolume] = useState(0.35);
+  const [currentPlayingAmbient, setCurrentPlayingAmbient] = useState<SceneType>("silence");
 
   const addHighlight = useCallback(
     (highlight: Omit<Highlight, "id" | "timestamp">) => {
@@ -207,6 +229,15 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
         setVoiceProfile,
         activeVoiceType,
         setActiveVoiceType,
+        // Ambient soundscapes
+        ambientMode,
+        setAmbientMode,
+        ambientScene,
+        setAmbientScene,
+        ambientVolume,
+        setAmbientVolume,
+        currentPlayingAmbient,
+        setCurrentPlayingAmbient,
       }}
     >
       {children}

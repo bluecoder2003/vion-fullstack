@@ -1,6 +1,9 @@
 import hashlib
 import io
 import wave
+import logging
+import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -8,6 +11,8 @@ from typing import Optional
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+logger = logging.getLogger("uvicorn.error")
 
 
 DEFAULT_KOKORO_VOICE = "af_heart"
@@ -185,8 +190,54 @@ def trim_wav_leading_seconds(wav_bytes: bytes, skip_seconds: float) -> bytes:
 
 
 def split_sentences(text: str) -> list[str]:
-    doc = _get_spacy_nlp()(text)
-    return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+    if not text:
+        return []
+        
+    abbreviations = {
+        "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "eg", "ie", "al",
+        "col", "gen", "lt", "capt", "sgt", "st", "ave", "rd", "jan", "feb", "mar",
+        "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec"
+    }
+    
+    # Capture punctuation and trailing quotes/whitespace
+    parts = re.split(r"([.!?]+[\s\"')\]}\u201d\u2019]*)", text)
+    sentences = []
+    current = ""
+    
+    for i in range(0, len(parts) - 1, 2):
+        chunk = parts[i]
+        punct = parts[i+1]
+        current += chunk + punct
+        
+        # Rule 1 & 2: check preceding word
+        # Get words in the current chunk
+        words = re.findall(r"[a-zA-Z]+", chunk)
+        last_word = words[-1] if words else ""
+        last_word_lower = last_word.lower()
+        is_period = punct.startswith(".")
+        
+        # Rule 1: Abbreviations
+        if is_period and last_word_lower in abbreviations:
+            continue
+            
+        # Rule 2: Initials (e.g. J. F. Kennedy)
+        if is_period and len(last_word) == 1 and last_word.isupper():
+            continue
+            
+        # Rule 3: Decimals / digits (e.g., 3.14)
+        next_chunk = parts[i+2] if i + 2 < len(parts) else ""
+        if is_period and next_chunk and next_chunk[0].isdigit():
+            continue
+            
+        sentences.append(current.strip())
+        current = ""
+        
+    if len(parts) % 2 != 0:
+        current += parts[-1]
+    if current.strip():
+        sentences.append(current.strip())
+        
+    return [s for s in sentences if s]
 
 
 def detect_emotion(text: str) -> str:
@@ -291,6 +342,78 @@ def write_emotional_wav_file(text: str | list[str], output_file: Path, pause_ms:
     output_file.write_bytes(combine_wav_chunks(wav_chunks, pause_ms=pause_ms))
 
 
+def write_emotional_wav_file_with_timestamps(text: str | list[str], output_file: Path, pause_ms: int = 180) -> None:
+    if isinstance(text, str):
+        parts = [text]
+    else:
+        parts = text
+
+    sentences: list[str] = []
+    for part in parts:
+        stripped = part.strip()
+        if not stripped:
+            continue
+        sents = split_sentences(stripped)
+        if not sents:
+            sents = [stripped]
+        sentences.extend(sents)
+
+    # Synthesize each sentence to get exact sample durations
+    wav_chunks: list[bytes] = []
+    words_timestamps = []
+    current_time = 0.0
+
+    nlp = _get_spacy_nlp()
+
+    for index, sentence in enumerate(sentences):
+        voice = choose_voice_for_sentence(sentence)
+        _, wav_bytes = synthesize_texts_to_wav_bytes([sentence], voice)
+        wav_chunks.append(wav_bytes)
+
+        # Calculate exact duration
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            n_frames = wav_file.getnframes()
+        duration = n_frames / sample_rate
+
+        # Get spaCy tokens for word-level timestamps
+        doc = nlp(sentence)
+        tokens = [t for t in doc if t.text.strip()]
+        sentence_len = len(sentence)
+
+        if sentence_len > 0 and tokens:
+            for token in tokens:
+                start_char = token.idx
+                end_char = token.idx + len(token.text)
+                
+                t_start = current_time + (start_char / sentence_len) * duration
+                t_end = current_time + (end_char / sentence_len) * duration
+                
+                words_timestamps.append({
+                    "word": token.text,
+                    "start": round(t_start, 3),
+                    "end": round(t_end, 3)
+                })
+        elif tokens:
+            for i_tok, token in enumerate(tokens):
+                t_start = current_time + (i_tok / len(tokens)) * duration
+                t_end = current_time + ((i_tok + 1) / len(tokens)) * duration
+                words_timestamps.append({
+                    "word": token.text,
+                    "start": round(t_start, 3),
+                    "end": round(t_end, 3)
+                })
+
+        current_time += duration
+        if index < len(sentences) - 1:
+            current_time += pause_ms / 1000.0
+
+    output_file.write_bytes(combine_wav_chunks(wav_chunks, pause_ms=pause_ms))
+
+    timestamps_path = output_file.parent / f"{output_file.name}.timestamps.json"
+    timestamps_path.write_text(json.dumps(words_timestamps))
+
+
 def write_trimmed_emotional_wav_file(
     text: str | list[str],
     output_file: Path,
@@ -356,6 +479,7 @@ def create_scene_demo_router(output_dir: Path) -> APIRouter:
             except HTTPException:
                 raise
             except Exception as exc:
+                logger.exception("Error in generate_scene_demo_tts:")
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {

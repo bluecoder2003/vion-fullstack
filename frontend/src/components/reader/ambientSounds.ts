@@ -454,22 +454,72 @@ export class AmbientEngine {
   // ═══════════════════════════════════════════════════════
 
   private buildScene(ctx: AudioContext, scene: SceneType, dest: GainNode, layer: SceneLayer) {
-    switch (scene) {
-      case "morning":  this.buildMorning(ctx, dest, layer); break;
-      case "nature":   this.buildNature(ctx, dest, layer); break;
-      case "rain":     this.buildRain(ctx, dest, layer); break;
-      case "ocean":    this.buildOcean(ctx, dest, layer); break;
-      case "wind":     this.buildWind(ctx, dest, layer); break;
-      case "fire":     this.buildFire(ctx, dest, layer); break;
-      case "night":    this.buildNight(ctx, dest, layer); break;
-      case "city":     this.buildCity(ctx, dest, layer); break;
-      case "river":    this.buildRiver(ctx, dest, layer); break;
-      case "storm":    this.buildStorm(ctx, dest, layer); break;
-      case "snow":     this.buildSnow(ctx, dest, layer); break;
-      case "indoor":   this.buildIndoor(ctx, dest, layer); break;
-      default: break;
+    const AUDIO_FILES: Partial<Record<SceneType, string>> = {
+      rain: "/audio/rain.mp3",
+      ocean: "/audio/ocean.mp3",
+      wind: "/audio/wind.mp3",
+      fire: "/audio/fire.mp3",
+      night: "/audio/night.mp3",
+      city: "/audio/city.mp3",
+      river: "/audio/river.mp3",
+      storm: "/audio/storm.mp3",
+      snow: "/audio/snow.mp3",
+      indoor: "/audio/room.mp3",
+    };
+
+    const audioUrl = AUDIO_FILES[scene];
+    if (audioUrl) {
+      this.buildFileScene(ctx, audioUrl, dest, layer, () => {
+        switch (scene) {
+          case "rain":     this.buildRain(ctx, dest, layer); break;
+          case "ocean":    this.buildOcean(ctx, dest, layer); break;
+          case "wind":     this.buildWind(ctx, dest, layer); break;
+          case "fire":     this.buildFire(ctx, dest, layer); break;
+          case "night":    this.buildNight(ctx, dest, layer); break;
+          case "city":     this.buildCity(ctx, dest, layer); break;
+          case "river":    this.buildRiver(ctx, dest, layer); break;
+          case "storm":    this.buildStorm(ctx, dest, layer); break;
+          case "snow":     this.buildSnow(ctx, dest, layer); break;
+          case "indoor":   this.buildIndoor(ctx, dest, layer); break;
+          default: break;
+        }
+      });
+    } else {
+      switch (scene) {
+        case "morning":  this.buildMorning(ctx, dest, layer); break;
+        case "nature":   this.buildNature(ctx, dest, layer); break;
+        default: break;
+      }
     }
   }
+
+  private async buildFileScene(
+    ctx: AudioContext,
+    url: string,
+    dest: GainNode,
+    layer: SceneLayer,
+    fallbackBuilder: () => void
+  ) {
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(arrayBuffer);
+      
+      if (!this._running || !this.isLayerActive(layer)) return;
+      
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(dest);
+      source.start();
+      
+      layer.nodes.push(source);
+    } catch (err) {
+      console.warn("Failed to load and decode ambient audio file, falling back to procedural:", url, err);
+      fallbackBuilder();
+    }
+  }
+
 
   // ── Helpers ──
 

@@ -15,7 +15,7 @@ import {
   Waves,
 } from "lucide-react";
 import { useReader } from "./ReaderContext";
-import { sampleBook } from "./sampleBook";
+import { sampleBook, soundscapePoemsBook } from "./sampleBook";
 import type { Book } from "./ReaderContext";
 import { toast } from "sonner";
 import {
@@ -62,6 +62,14 @@ const CURATED_SAMPLE_BOOKS = [
     title: "Pride and Prejudice",
     author: "Jane Austen",
     url: PRIDE_AND_PREJUDICE_EPUB_URL,
+    fallback: undefined,
+  },
+  {
+    id: "soundscape-poems-demo",
+    title: "Atmospheric Journeys",
+    author: "Antigravity AI",
+    url: "",
+    fallback: soundscapePoemsBook,
   },
 ] as const;
 
@@ -306,6 +314,17 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
   const openSampleBook = useCallback(async (sample: (typeof CURATED_SAMPLE_BOOKS)[number]) => {
     setLoadingSample(true);
     try {
+      if (!sample.url) {
+        if ("fallback" in sample && sample.fallback) {
+          setBook(sample.fallback as Book);
+          setCurrentChapterIndex(0);
+          onOpenBook();
+          toast.success(`Opened "${sample.title}"`);
+        } else {
+          toast.error(`No local version of "${sample.title}" found.`);
+        }
+        return;
+      }
       toast.info(`Fetching ${sample.title} EPUB...`);
       const bookData = await parseEpubFromUrl(sample.url, sample.title);
       bookData.id = sample.id;
@@ -327,6 +346,7 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
       setLoadingSample(false);
     }
   }, [setBook, setCurrentChapterIndex, onOpenBook]);
+
 
   const handleFileUpload = useCallback(
     async (file: File) => {

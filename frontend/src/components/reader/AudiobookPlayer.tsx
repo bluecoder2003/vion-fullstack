@@ -91,6 +91,7 @@ export function AudiobookPlayer() {
     setAmbientVolume,
     currentPlayingAmbient,
     setCurrentPlayingAmbient,
+    audioVoice,
   } = useReader();
 
   const t = themes[theme];
@@ -576,7 +577,7 @@ export function AudiobookPlayer() {
           book_id: String(book.id || ""),
           title: Array.isArray(book.title) ? book.title.join(", ") : String(book.title || ""),
           author: Array.isArray(book.author) ? book.author.join(", ") : String(book.author || ""),
-          voice: "af_heart",
+          voice: book.voice || audioVoice || "bm_george",
           chapters: (book.chapters || []).map((ch) => ({
             id: String(ch.id || ""),
             title: Array.isArray(ch.title) ? ch.title.join(", ") : String(ch.title || ""),

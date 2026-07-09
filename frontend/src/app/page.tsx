@@ -10,6 +10,7 @@ export default function Home() {
     <LibraryPage
       onOpenBook={() => router.push("/reader")}
       onOpenSceneDemo={() => router.push("/scene-demo")}
+      onOpenEmotionDemo={() => router.push("/emotion-demo")}
     />
   );
 }

@@ -15,7 +15,8 @@ import {
   Waves,
 } from "lucide-react";
 import { useReader } from "./ReaderContext";
-import { sampleBook, soundscapePoemsBook } from "./sampleBook";
+import { soundscapePoemsBook } from "./sampleBook";
+import { draculaDemoBook } from "./demoBook";
 import type { Book } from "./ReaderContext";
 import { toast } from "sonner";
 import {
@@ -41,21 +42,20 @@ import { ImageWithFallback } from "../figma/ImageWithFallback";
 interface LibraryPageProps {
   onOpenBook: () => void;
   onOpenSceneDemo?: () => void;
+  onOpenEmotionDemo?: () => void;
 }
 
-// URL for the real Frankenstein EPUB
-const FRANKENSTEIN_EPUB_URL =
-  "https://raw.githubusercontent.com/bluecoder2003/books-exclusive/main/frankenstein.epub";
 const PRIDE_AND_PREJUDICE_EPUB_URL =
   "https://raw.githubusercontent.com/bluecoder2003/books-exclusive/main/pride_prejudice_clean.epub";
 
 const CURATED_SAMPLE_BOOKS = [
   {
-    id: "frankenstein-demo",
-    title: "Frankenstein",
-    author: "Mary Shelley",
-    url: FRANKENSTEIN_EPUB_URL,
-    fallback: sampleBook,
+    id: "dracula-demo",
+    title: "Dracula",
+    author: "Bram Stoker",
+    url: "",
+    fallback: draculaDemoBook,
+    coverImage: "/dracula.png",
   },
   {
     id: "pride-and-prejudice-demo",
@@ -63,6 +63,7 @@ const CURATED_SAMPLE_BOOKS = [
     author: "Jane Austen",
     url: PRIDE_AND_PREJUDICE_EPUB_URL,
     fallback: undefined,
+    coverImage: "/pride%26prejudice.png",
   },
   {
     id: "soundscape-poems-demo",
@@ -70,6 +71,7 @@ const CURATED_SAMPLE_BOOKS = [
     author: "Antigravity AI",
     url: "",
     fallback: soundscapePoemsBook,
+    coverImage: "/atmospheric-journeys.png",
   },
 ] as const;
 
@@ -85,7 +87,7 @@ const CATEGORIES = [
   { label: "Romance", query: "subject:love AND language:eng" },
 ];
 
-export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
+export function LibraryPage({ onOpenBook, onOpenSceneDemo, onOpenEmotionDemo }: LibraryPageProps) {
   const { setBook, setCurrentChapterIndex } = useReader();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -533,6 +535,16 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
           <span style={{ fontSize: 20, fontWeight: 500 }}>Book Reader</span>
         </div>
         <div className="flex items-center gap-2">
+          {onOpenEmotionDemo && (
+            <button
+              onClick={onOpenEmotionDemo}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors hover:opacity-80"
+              style={{ backgroundColor: "#333", color: "#f59e0b", border: "1px solid #f59e0b44", fontSize: 13 }}
+            >
+              <Sparkles size={14} />
+              Emotion Demo
+            </button>
+          )}
           {onOpenSceneDemo && (
             <button
               onClick={onOpenSceneDemo}
@@ -722,7 +734,7 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
                   className="mt-2"
                   style={{ color: "#555", fontSize: 13 }}
                 >
-                  Try "pride and prejudice", "sherlock holmes", or "mark
+                  Try "pride and prejudice", "sherlock holmes", "frankenstein", or "mark
                   twain"
                 </div>
 
@@ -731,6 +743,7 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
                   {[
                     "Pride and Prejudice",
                     "Sherlock Holmes",
+                    "Frankenstein",
                     "Moby Dick",
                     "Dracula",
                     "Alice in Wonderland",
@@ -912,59 +925,41 @@ export function LibraryPage({ onOpenBook, onOpenSceneDemo }: LibraryPageProps) {
                       className="aspect-[2/3] rounded-lg overflow-hidden mb-3 flex items-center justify-center relative"
                       style={{
                         backgroundColor: "#2a2a35",
-                        borderTop: "1px solid #3a3a45",
-                        borderLeft: "1px solid #3a3a45",
-                        borderRight: "1px solid #3a3a45",
-                        borderBottom: "1px solid #3a3a45",
+                        border: "1px solid #3a3a45",
                       }}
                     >
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                        {loadingSample ? (
-                          <>
-                            <Loader2
-                              size={28}
-                              className="mb-2 animate-spin"
-                              style={{ color: "#6b9fff" }}
-                            />
-                            <div style={{ fontSize: 12, opacity: 0.6 }}>
-                              Loading EPUB…
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <BookOpen
-                              size={28}
-                              className="mb-2"
-                              style={{ color: "#6b9fff", opacity: 0.6 }}
-                            />
-                            <div
-                              style={{
-                                fontSize: 15,
-                                fontWeight: 500,
-                                lineHeight: 1.3,
-                              }}
-                            >
-                              {sample.title}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 11,
-                                opacity: 0.5,
-                                marginTop: 6,
-                              }}
-                            >
-                              {sample.author}
-                            </div>
-                          </>
-                        )}
-                      </div>
+                      {/* Cover image */}
+                      {"coverImage" in sample && sample.coverImage && (
+                        <img
+                          src={sample.coverImage}
+                          alt={sample.title}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          draggable={false}
+                        />
+                      )}
+
+                      {/* Loading overlay */}
+                      {loadingSample && (
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
+                          <Loader2 size={28} className="mb-2 animate-spin" style={{ color: "#6b9fff" }} />
+                          <div style={{ fontSize: 12, opacity: 0.8, color: "#fff" }}>Loading EPUB…</div>
+                        </div>
+                      )}
+
+                      {/* No cover fallback */}
+                      {!("coverImage" in sample && sample.coverImage) && !loadingSample && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+                          <BookOpen size={28} className="mb-2" style={{ color: "#6b9fff", opacity: 0.6 }} />
+                          <div style={{ fontSize: 15, fontWeight: 500, lineHeight: 1.3 }}>{sample.title}</div>
+                          <div style={{ fontSize: 11, opacity: 0.5, marginTop: 6 }}>{sample.author}</div>
+                        </div>
+                      )}
+
+                      {/* Hover overlay */}
                       {!loadingSample && (
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 backdrop-blur-sm rounded-full p-3">
-                            <BookOpenCheck
-                              size={20}
-                              style={{ color: "#fff" }}
-                            />
+                            <BookOpenCheck size={20} style={{ color: "#fff" }} />
                           </div>
                         </div>
                       )}

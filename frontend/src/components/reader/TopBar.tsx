@@ -8,11 +8,20 @@ import {
   Headphones,
   ChevronLeft,
   Music,
+  Languages,
 } from "lucide-react";
 import { useReader } from "./ReaderContext";
 import { themes } from "./themeStyles";
 
-export function TopBar({ onBack, musicOpen, onToggleMusic }: { onBack?: () => void; musicOpen?: boolean; onToggleMusic?: () => void }) {
+export function TopBar({ onBack, musicOpen, onToggleMusic, voicePickerOpen, onToggleVoicePicker, languagePickerOpen, onToggleLanguagePicker }: {
+  onBack?: () => void;
+  musicOpen?: boolean;
+  onToggleMusic?: () => void;
+  voicePickerOpen?: boolean;
+  onToggleVoicePicker?: () => void;
+  languagePickerOpen?: boolean;
+  onToggleLanguagePicker?: () => void;
+}) {
   const {
     book,
     theme,
@@ -56,11 +65,8 @@ export function TopBar({ onBack, musicOpen, onToggleMusic }: { onBack?: () => vo
   };
 
   const toggleAudioMode = () => {
-    if (isAudioMode) {
-      setAudioPlaying(false);
-      setIsAudioMode(false);
-    } else {
-      setIsAudioMode(true);
+    if (onToggleVoicePicker) {
+      onToggleVoicePicker();
     }
   };
 
@@ -127,8 +133,8 @@ export function TopBar({ onBack, musicOpen, onToggleMusic }: { onBack?: () => vo
         <button
           onClick={toggleAudioMode}
           className="p-2 rounded-md transition-colors hover:opacity-70"
-          style={{ color: isAudioMode ? t.accent : t.toolbarText }}
-          title={isAudioMode ? "Stop Audio" : "Listen to Book"}
+          style={{ color: (isAudioMode || voicePickerOpen) ? t.accent : t.toolbarText }}
+          title="Choose voice &amp; listen"
         >
           <Headphones size={18} />
         </button>
@@ -142,6 +148,18 @@ export function TopBar({ onBack, musicOpen, onToggleMusic }: { onBack?: () => vo
             title="Audio & Soundscape Settings"
           >
             <Music size={18} />
+          </button>
+        )}
+
+        {/* Language / translation toggle */}
+        {onToggleLanguagePicker && (
+          <button
+            onClick={onToggleLanguagePicker}
+            className="p-2 rounded-md transition-colors hover:opacity-70"
+            style={{ color: languagePickerOpen ? t.accent : t.toolbarText }}
+            title="Reading Language"
+          >
+            <Languages size={18} />
           </button>
         )}
 

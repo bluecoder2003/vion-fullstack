@@ -38,6 +38,12 @@ export function ReaderContent() {
     audioSentenceIndex,
     setAudioSentenceIndex,
     audioWordIndex,
+    // Translation
+    language,
+    translations,
+    translatingKeys,
+    addTranslation,
+    setTranslating,
   } = useReader();
 
   const t = themes[theme];
@@ -71,11 +77,26 @@ export function ReaderContent() {
 
   const chapter = book?.chapters[currentChapterIndex];
 
+  // Translation lookup — swaps in translated content when a non-English language
+  // is active and the translation is cached. Falls back to original text otherwise.
+  const translatedContent = useMemo(() => {
+    if (!chapter || language === "en") return null;
+    return translations.get(`${chapter.id}:${language}`) ?? null;
+  }, [chapter, language, translations]);
+
+  const isTranslating = useMemo(() => {
+    if (!chapter || language === "en") return false;
+    return translatingKeys.has(`${chapter.id}:${language}`);
+  }, [chapter, language, translatingKeys]);
+
   // ── Sentence map (shared with AudioPlayer for identical indexing) ──
-  const sentenceMap = useMemo(
-    () => (chapter ? buildSentenceMap(chapter.content, chapter.paragraphs) : null),
-    [chapter]
-  );
+  // When translated, we build a NEW sentence map from the translated text.
+  // Audio still uses the English map — highlighting is approximate in translation mode.
+  const sentenceMap = useMemo(() => {
+    if (!chapter) return null;
+    if (translatedContent) return buildSentenceMap(translatedContent);
+    return buildSentenceMap(chapter.content, chapter.paragraphs);
+  }, [chapter, translatedContent]);
 
   const paragraphOriginalPages = useMemo(() => {
     if (!sentenceMap) return [];
@@ -136,6 +157,34 @@ export function ReaderContent() {
   useEffect(() => {
     setSpreadIndex(0);
   }, [currentChapterIndex]);
+
+  // Auto-translate the current chapter when the language changes or when
+  // navigating to a chapter whose translation is not yet cached.
+  useEffect(() => {
+    if (!chapter || language === "en") return;
+    const key = `${chapter.id}:${language}`;
+    if (translations.has(key) || translatingKeys.has(key)) return;
+
+    let cancelled = false;
+    setTranslating(key, true);
+    (async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: chapter.content, target_lang: language }),
+        });
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) addTranslation(chapter.id, language, data.translated);
+      } catch (err) {
+        console.error("Translation failed:", err);
+      } finally {
+        if (!cancelled) setTranslating(key, false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chapter, language, translations, translatingKeys, addTranslation, setTranslating]);
 
   const leftPageOriginal = colOriginalPages[spreadIndex * 2] ?? (spreadIndex * 2 + 1);
   const rightPageOriginal = colOriginalPages[spreadIndex * 2 + 1] ?? Math.min(spreadIndex * 2 + 2, totalColumns);
@@ -753,6 +802,28 @@ export function ReaderContent() {
       style={{ backgroundColor: t.bg }}
       onClick={handleContentClick}
     >
+      {/* Translation loading overlay */}
+      {isTranslating && (
+        <div
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none"
+          style={{ backgroundColor: `${t.bg}e6` }}
+        >
+          <div
+            className="animate-spin rounded-full h-8 w-8 border-2 mb-3"
+            style={{
+              borderColor: `${t.border}`,
+              borderTopColor: t.accent,
+            }}
+          />
+          <div style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>
+            Translating…
+          </div>
+          <div style={{ color: t.text, fontSize: 11, opacity: 0.5, marginTop: 4 }}>
+            First-time translation loads the language model
+          </div>
+        </div>
+      )}
+
       {/* ── Paginated reading area ── */}
       <div
         ref={outerRef}
@@ -773,7 +844,12 @@ export function ReaderContent() {
             columnGap: `${COL_GAP}px`,
             columnFill: "auto" as const,
             color: t.text,
-            fontFamily: t.fontFamily,
+            fontFamily:
+              language === "bn"
+                ? `"Noto Sans Bengali", "Hind Siliguri", ${t.fontFamily}`
+                : language === "hi"
+                ? `"Noto Sans Devanagari", "Hind", ${t.fontFamily}`
+                : t.fontFamily,
             fontSize: `${fontSize}px`,
             transform: `translateX(${translateX}px)`,
             transition: "transform 0.3s cubic-bezier(.25,.1,.25,1)",

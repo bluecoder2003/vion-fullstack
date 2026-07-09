@@ -528,30 +528,9 @@ function parseTextIntoChapters(
       });
     }
 
-    // If there's significant text before the first chapter, add it as a preface
-    if (matches[0].index > 500) {
-      const preface = text.slice(0, matches[0].index).trim();
-      if (preface.length > 100) {
-        // Avoid adding pure front matter (title, copyright, contents list) as preface
-        const lower = preface.toLowerCase();
-        const hasCopyright = lower.includes("copyright");
-        const hasContents = lower.includes("contents");
-        const hasProducedBy = lower.includes("produced by");
-        const sentenceCount = (preface.match(/[.!?]\s+[A-Z\d"“']/g) || []).length;
-        const isFrontMatter = (hasCopyright || hasContents || hasProducedBy) && sentenceCount < 3;
-
-        if (!isFrontMatter) {
-          chapters.unshift({
-            id: "preface",
-            title: "Preface",
-            page: 0,
-            content: preface,
-          });
-          // Re-number pages
-          chapters.forEach((ch, i) => (ch.page = i + 1));
-        }
-      }
-    }
+    // Everything before the first chapter heading (Gutenberg metadata, title
+    // pages, TOC, “Produced by” attribution) is intentionally dropped so the
+    // reader always opens at Chapter 1.
   }
 
   // Fallback: split by character count to produce substantial chapters

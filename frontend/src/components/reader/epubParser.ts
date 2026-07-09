@@ -282,8 +282,26 @@ export async function parseEpub(
     throw new Error("Could not extract any readable content from this EPUB.");
   }
 
+  // Drop front-matter spine items (cover, title page, copyright, etc.) that
+  // appear before the first real chapter.  A "real" chapter either has a title
+  // matching common chapter keywords, or has enough content to be substantive.
+  const FRONT_MATTER_TITLE =
+    /^(cover|title[\s\-]?page?|copyright(\s*page)?|half[\s\-]title|frontispiece|colophon|also[\s\-]by|about[\s\-]the|publisher|credits?)$/i;
+
+  const hasRealChapters = chapters.some(
+    (ch) => ch.content.trim().length > 300 && !FRONT_MATTER_TITLE.test(ch.title.trim())
+  );
+
+  const finalChapters = hasRealChapters
+    ? chapters.filter((ch) => {
+        const isFrontMatter =
+          FRONT_MATTER_TITLE.test(ch.title.trim()) || ch.content.trim().length < 100;
+        return !isFrontMatter;
+      })
+    : chapters;
+
   // Re-number pages
-  chapters.forEach((ch, idx) => (ch.page = idx + 1));
+  finalChapters.forEach((ch, idx) => (ch.page = idx + 1));
 
   epub.destroy();
 
@@ -293,8 +311,8 @@ export async function parseEpub(
     id: `epub-${Date.now()}`,
     title,
     author,
-    chapters,
-    totalPages: chapters.length,
+    chapters: finalChapters,
+    totalPages: finalChapters.length,
     illustrations: illustrations.length > 0 ? illustrations : undefined,
   };
 }

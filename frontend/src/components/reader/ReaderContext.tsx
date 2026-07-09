@@ -3,6 +3,7 @@ import type { VoiceProfile } from "./VoiceRecorder";
 import type { SceneType } from "./ambientSounds";
 
 export type ThemeType = "original" | "quiet" | "paper" | "bold" | "calm" | "focus";
+export type LanguageType = "en" | "bn" | "hi" | "fr" | "es" | "de";
 
 export interface Chapter {
   id: string;
@@ -44,6 +45,8 @@ export interface Book {
   illustrations?: string[];
   /** Pre-recorded chapter audio URLs from LibriVox / Internet Archive */
   audioUrls?: string[];
+  /** Kokoro voice to use for TTS generation (default: "af_heart") */
+  voice?: string;
 }
 
 export type SidebarType = "contents" | "bookmarks" | "highlights" | null;
@@ -85,6 +88,19 @@ interface ReaderContextType {
   setAudioWordIndex: (idx: number) => void;
   audioSpeed: number;
   setAudioSpeed: (speed: number) => void;
+  /** Kokoro voice chosen by the user in the voice picker */
+  audioVoice: string;
+  setAudioVoice: (voice: string) => void;
+
+  // ── Reading language / translation ──
+  language: LanguageType;
+  setLanguage: (lang: LanguageType) => void;
+  /** Map of `${chapterId}:${lang}` → translated content */
+  translations: Map<string, string>;
+  addTranslation: (chapterId: string, lang: LanguageType, text: string) => void;
+  /** Set of chapters currently being translated (for loading UI) */
+  translatingKeys: Set<string>;
+  setTranslating: (key: string, on: boolean) => void;
 
   // ── Personal voice ──
   voiceProfile: VoiceProfile | null;
@@ -129,6 +145,32 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
   const [audioSentenceIndex, setAudioSentenceIndex] = useState(0);
   const [audioWordIndex, setAudioWordIndex] = useState(-1);
   const [audioSpeed, setAudioSpeed] = useState(1);
+  const [audioVoice, setAudioVoice] = useState("bm_george");
+
+  // Language / translation
+  const [language, setLanguage] = useState<LanguageType>("en");
+  const [translations, setTranslations] = useState<Map<string, string>>(new Map());
+  const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(new Set());
+
+  const addTranslation = useCallback(
+    (chapterId: string, lang: LanguageType, text: string) => {
+      setTranslations((prev) => {
+        const next = new Map(prev);
+        next.set(`${chapterId}:${lang}`, text);
+        return next;
+      });
+    },
+    []
+  );
+
+  const setTranslating = useCallback((key: string, on: boolean) => {
+    setTranslatingKeys((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
 
   // Personal voice state
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
@@ -224,6 +266,14 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
         setAudioWordIndex,
         audioSpeed,
         setAudioSpeed,
+        audioVoice,
+        setAudioVoice,
+        language,
+        setLanguage,
+        translations,
+        addTranslation,
+        translatingKeys,
+        setTranslating,
         // Personal voice
         voiceProfile,
         setVoiceProfile,

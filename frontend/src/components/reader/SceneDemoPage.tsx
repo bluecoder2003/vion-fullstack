@@ -38,10 +38,20 @@ interface NarrationVoice {
 
 const KOKORO_VOICES: NarrationVoice[] = [
   {
+    id: "bm_george",
+    name: "George",
+    description: "Deep British male narration",
+    recommended: true,
+  },
+  {
+    id: "bm_lewis",
+    name: "Lewis",
+    description: "Measured British male tone",
+  },
+  {
     id: "af_heart",
     name: "Heart",
     description: "Warm, gentle narration",
-    recommended: true,
   },
   {
     id: "af_bella",
@@ -55,7 +65,7 @@ const KOKORO_VOICES: NarrationVoice[] = [
   },
 ];
 
-const DEFAULT_KOKORO_VOICE_ID = "af_heart";
+const DEFAULT_KOKORO_VOICE_ID = "bm_george";
 
 // ═══════════════════════════════════════════════════
 //  EXAMPLE PASSAGES — literary text for each scene

@@ -1,9 +1,11 @@
+import hashlib
 import time
 import os
 import json
 import logging
 import re
 import torch
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
@@ -27,6 +29,15 @@ from scene_demo_tts import (
     write_kokoro_wav_file,
     write_emotional_wav_file_with_timestamps,
     split_sentences,
+    get_sentence_speed,
+    get_sentence_emotion_profile,
+    detect_emotion,
+    detect_delivery_context,
+    synthesize_texts_to_wav_bytes,
+    apply_emotion_effects,
+    _wav_bytes_apply_effects,
+    EMOTION_PROFILE,
+    DEFAULT_KOKORO_VOICE,
 )
 
 
@@ -318,8 +329,9 @@ def _select_demo_audiobook_chapters(
 jobs_db = {}
 
 
-def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list[Chapter]):
-    book_dir = OUTPUT_DIR / safe_book_id
+def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list[Chapter], voice: str = "af_heart"):
+    safe_voice = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in voice) or "af_heart"
+    book_dir = OUTPUT_DIR / f"{safe_book_id}-{safe_voice}"
     book_dir.mkdir(parents=True, exist_ok=True)
     
     try:
@@ -332,7 +344,7 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
             
             if is_pride:
                 chapter_filename = "chapter-1-2.wav"
-                rel_path = f"{safe_book_id}/{chapter_filename}"
+                rel_path = f"{safe_book_id}-{safe_voice}/{chapter_filename}"
                 if rel_path not in jobs_db[job_id]["ready_files"]:
                     jobs_db[job_id]["ready_files"].append(rel_path)
                 continue
@@ -384,11 +396,11 @@ def process_audiobook_job(job_id: str, safe_book_id: str, preview_chapters: list
                 
                 if not output_file.exists():
                     logger.info(f"[Job {job_id}] Synthesizing paragraph {para_idx + 1}/{len(paragraphs)} for chapter {chapter.id}...")
-                    write_emotional_wav_file_with_timestamps(para, output_file)
+                    write_emotional_wav_file_with_timestamps(para, output_file, voice=voice)
                 else:
                     logger.info(f"[Job {job_id}] Paragraph part {part_filename} already exists, skipping synthesis.")
                 
-                rel_path = f"{safe_book_id}/{part_filename}"
+                rel_path = f"{safe_book_id}-{safe_voice}/{part_filename}"
                 if rel_path not in jobs_db[job_id]["ready_files"]:
                     jobs_db[job_id]["ready_files"].append(rel_path)
                 
@@ -453,10 +465,18 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
             "paragraphs": get_chapter_paragraphs_structure(chapter.content)
         })
 
-    # Check if there is already an active job for this safe_book_id
+    # Resolve the requested voice BEFORE the dedup check so it can be compared.
+    resolved_voice = payload.voice or "af_heart"
+
+    # Check if there is already an active job for this book + voice combination.
+    # A different voice must start a fresh job even for the same book.
     existing_job_id = None
     for j_id, j_info in jobs_db.items():
-        if j_info.get("safe_book_id") == safe_book_id and j_info["status"] in ("processing", "queued"):
+        if (
+            j_info.get("safe_book_id") == safe_book_id
+            and j_info.get("voice") == resolved_voice
+            and j_info["status"] in ("processing", "queued")
+        ):
             existing_job_id = j_id
             break
             
@@ -512,20 +532,22 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
             paragraphs.append("\n\n".join(current))
 
         total_parts += len(paragraphs)
-    
+
     jobs_db[job_id] = {
         "status": "processing",
         "safe_book_id": safe_book_id,
+        "voice": resolved_voice,
         "ready_files": [],
         "total": total_parts,
         "error": None
     }
-    
+
     background_tasks.add_task(
         process_audiobook_job,
         job_id,
         safe_book_id,
-        preview_chapters
+        preview_chapters,
+        resolved_voice,
     )
     
     return {
@@ -546,14 +568,14 @@ async def generate_audiobook(payload: AudiobookRequest, background_tasks: Backgr
 async def get_audiobook_status(job_id: str):
     job = jobs_db.get(job_id)
     if not job:
-        # Fallback for old/direct requests or server restart
+        # Fallback for server restart — scan all dirs matching the book prefix
         safe_book_id = job_id.replace("job-", "").rsplit("-", 1)[0]
-        # Check output directory files
-        book_dir = OUTPUT_DIR / safe_book_id
         ready_files = []
-        if book_dir.exists():
-            for f in sorted(book_dir.glob("*.wav")):
-                ready_files.append(f"{safe_book_id}/{f.name}")
+        for book_dir in sorted(OUTPUT_DIR.glob(f"{safe_book_id}-*")):
+            if book_dir.is_dir():
+                dir_name = book_dir.name
+                for f in sorted(book_dir.glob("*.wav")):
+                    ready_files.append(f"{dir_name}/{f.name}")
         return {
             "status": "complete" if ready_files else "error",
             "job_id": job_id,
@@ -618,6 +640,194 @@ async def get_word_timestamps(filename: str):
         return json.loads(cache_path.read_text())
 
     raise HTTPException(
-        status_code=404, 
+        status_code=404,
         detail="Word timestamps not pre-generated for this file"
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# EMOTION DEMO — single-sentence TTS with emotion metadata
+# ─────────────────────────────────────────────────────────────
+
+EMOTION_DEMO_DIR = OUTPUT_DIR / "emotion-demo"
+EMOTION_DEMO_DIR.mkdir(exist_ok=True)
+
+
+class EmotionDemoRequest(BaseModel):
+    text: str
+    emotion: Optional[str] = None   # frontend can force an emotion, skipping ML detection
+
+
+# Voices that must be used directly for specific emotions — no blending.
+_EMOTION_VOICE_FORCE: dict[str, str] = {
+    "joy":      "bm_george",
+    "surprise": "bm_george",
+}
+
+@app.post("/api/emotion-demo/tts")
+async def emotion_demo_tts(payload: EmotionDemoRequest):
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    prof = get_sentence_emotion_profile(text)
+    # Use the emotion the frontend explicitly selected; fall back to ML detection.
+    emotion = payload.emotion if payload.emotion else prof["emotion"]
+    context = prof["context"]
+    speed   = prof["speed"]
+    ep      = EMOTION_PROFILE.get(emotion, EMOTION_PROFILE["neutral"])
+
+    # Forced voice for specific emotions — guaranteed, no blending fallback.
+    forced_voice = _EMOTION_VOICE_FORCE.get(emotion)
+
+    digest = hashlib.sha1(f"{emotion}:{text}".encode("utf-8")).hexdigest()
+    filename = f"{emotion}-{digest[:12]}.wav"
+    output_file = EMOTION_DEMO_DIR / filename
+
+    if not output_file.exists():
+        try:
+            if forced_voice:
+                # Use the forced voice directly — completely bypasses blending
+                _, wav_bytes = synthesize_texts_to_wav_bytes([text], forced_voice, speed)
+            else:
+                _, wav_bytes = synthesize_texts_to_wav_bytes(
+                    [text], DEFAULT_KOKORO_VOICE, speed, emotion=emotion
+                )
+                wav_bytes = _wav_bytes_apply_effects(wav_bytes, emotion)
+            output_file.write_bytes(wav_bytes)
+        except Exception as exc:
+            logger.exception("Error in emotion_demo_tts:")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "url": f"/tts/emotion-demo/{filename}",
+        "emotion": emotion,
+        "context": context,
+        "speed": speed,
+        "pitch_semitones": ep["pitch_semitones"],
+        "has_tremolo": ep.get("tremolo") is not None,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# TRANSLATION — English → target language via Helsinki-NLP
+# ─────────────────────────────────────────────────────────────
+
+TRANSLATIONS_DIR = OUTPUT_DIR / "translations"
+TRANSLATIONS_DIR.mkdir(exist_ok=True)
+
+# One universal model handles all supported languages via NLLB codes.
+# NLLB-200 is Meta's "No Language Left Behind" — 200 languages, ~2.4 GB download.
+_NLLB_MODEL = "facebook/nllb-200-distilled-600M"
+
+# ISO 639-1 code → NLLB FLORES-200 code
+_NLLB_LANG_CODES = {
+    "en": "eng_Latn",
+    "bn": "ben_Beng",
+    "hi": "hin_Deva",
+    "fr": "fra_Latn",
+    "es": "spa_Latn",
+    "de": "deu_Latn",
+}
+
+_TRANSLATION_MODELS = _NLLB_LANG_CODES  # kept for endpoint validation
+
+
+@lru_cache(maxsize=1)
+def _get_nllb_translator():
+    """Load and cache the NLLB translation pipeline."""
+    from transformers import pipeline as hf_pipeline
+    logger.info(f"Loading translation model: {_NLLB_MODEL}  (first load may take a minute)")
+    return hf_pipeline("translation", model=_NLLB_MODEL)
+
+
+def _translate_chunk(text: str, target_lang: str) -> str:
+    """Translate a single chunk using NLLB with explicit src/tgt codes."""
+    tgt_code = _NLLB_LANG_CODES.get(target_lang)
+    if not tgt_code:
+        raise ValueError(f"Unsupported target language: {target_lang}")
+    translator = _get_nllb_translator()
+    result = translator(
+        text,
+        src_lang="eng_Latn",
+        tgt_lang=tgt_code,
+        max_length=1024,
+    )
+    return result[0]["translation_text"]
+
+
+def _split_for_translation(text: str, max_chars: int = 600) -> list[str]:
+    """Split text into chunks that fit inside the translation model context."""
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for p in paragraphs:
+        if len(p) > max_chars:
+            # Split very long paragraphs on sentence boundaries
+            for sent in split_sentences(p) or [p]:
+                if current_len + len(sent) > max_chars and current:
+                    chunks.append(" ".join(current))
+                    current = [sent]
+                    current_len = len(sent)
+                else:
+                    current.append(sent)
+                    current_len += len(sent)
+            continue
+        if current_len + len(p) > max_chars and current:
+            chunks.append("\n\n".join(current))
+            current = [p]
+            current_len = len(p)
+        else:
+            current.append(p)
+            current_len += len(p)
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
+
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_lang: str = "bn"
+
+
+@app.post("/api/translate")
+async def translate_endpoint(payload: TranslateRequest):
+    text = payload.text.strip()
+    target = (payload.target_lang or "bn").strip().lower()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    if target == "en":
+        return {"translated": text, "target_lang": "en", "cached": False}
+
+    if target not in _TRANSLATION_MODELS:
+        raise HTTPException(status_code=400, detail=f"Language not supported: {target}")
+
+    # Cache by (target, text) hash on disk
+    digest = hashlib.sha1(f"{target}:{text}".encode("utf-8")).hexdigest()
+    cache_file = TRANSLATIONS_DIR / f"{target}-{digest}.txt"
+
+    if cache_file.exists():
+        return {
+            "translated": cache_file.read_text(encoding="utf-8"),
+            "target_lang": target,
+            "cached": True,
+        }
+
+    try:
+        chunks = _split_for_translation(text)
+        translated_chunks: list[str] = []
+        for idx, chunk in enumerate(chunks):
+            logger.info(f"Translating chunk {idx + 1}/{len(chunks)} to {target}")
+            translated_chunks.append(_translate_chunk(chunk, target))
+
+        joined = "\n\n".join(translated_chunks)
+        cache_file.write_text(joined, encoding="utf-8")
+        return {
+            "translated": joined,
+            "target_lang": target,
+            "cached": False,
+        }
+    except Exception as exc:
+        logger.exception("Translation failed:")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

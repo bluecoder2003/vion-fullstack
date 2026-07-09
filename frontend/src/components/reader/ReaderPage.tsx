@@ -8,6 +8,8 @@ import { ThemePanel } from "./ThemePanel";
 import { SearchPanel } from "./SearchPanel";
 import { ReaderContent } from "./ReaderContent";
 import { MusicPlayer } from "./MusicPlayer";
+import { VoicePicker } from "./VoicePicker";
+import { LanguagePicker } from "./LanguagePicker";
 import { themes } from "./themeStyles";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -24,9 +26,21 @@ export function ReaderPage({ onBack }: ReaderPageProps) {
     setThemeOpen,
     setSearchOpen,
     setSidebarType,
+    setIsAudioMode,
   } = useReader();
   const t = themes[theme];
   const [musicOpen, setMusicOpen] = useState(false);
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
+
+  const closeAll = () => {
+    setMusicOpen(false);
+    setThemeOpen(false);
+    setSearchOpen(false);
+    setVoicePickerOpen(false);
+    setLanguagePickerOpen(false);
+    if (sidebarType === "bookmarks") setSidebarType(null);
+  };
 
   return (
     <div className="size-full flex flex-col" style={{ backgroundColor: t.bg }}>
@@ -39,7 +53,38 @@ export function ReaderPage({ onBack }: ReaderPageProps) {
             setMusicOpen(!musicOpen);
             setThemeOpen(false);
             setSearchOpen(false);
+            setVoicePickerOpen(false);
+            setLanguagePickerOpen(false);
           }}
+          voicePickerOpen={voicePickerOpen}
+          onToggleVoicePicker={() => {
+            setVoicePickerOpen(!voicePickerOpen);
+            setMusicOpen(false);
+            setThemeOpen(false);
+            setSearchOpen(false);
+            setLanguagePickerOpen(false);
+          }}
+          languagePickerOpen={languagePickerOpen}
+          onToggleLanguagePicker={() => {
+            setLanguagePickerOpen(!languagePickerOpen);
+            setMusicOpen(false);
+            setThemeOpen(false);
+            setSearchOpen(false);
+            setVoicePickerOpen(false);
+          }}
+        />
+
+        {/* Voice picker dropdown */}
+        <VoicePicker
+          open={voicePickerOpen}
+          onClose={() => setVoicePickerOpen(false)}
+          onStart={() => setIsAudioMode(true)}
+        />
+
+        {/* Language picker dropdown */}
+        <LanguagePicker
+          open={languagePickerOpen}
+          onClose={() => setLanguagePickerOpen(false)}
         />
 
         {/* Music player dropdown */}
@@ -103,16 +148,8 @@ export function ReaderPage({ onBack }: ReaderPageProps) {
       </div>
 
       {/* Click overlay to close dropdowns */}
-      {(themeOpen || searchOpen || sidebarType === "bookmarks" || musicOpen) && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => {
-            setThemeOpen(false);
-            setSearchOpen(false);
-            setMusicOpen(false);
-            if (sidebarType === "bookmarks") setSidebarType(null);
-          }}
-        />
+      {(themeOpen || searchOpen || sidebarType === "bookmarks" || musicOpen || voicePickerOpen || languagePickerOpen) && (
+        <div className="fixed inset-0 z-40" onClick={closeAll} />
       )}
     </div>
   );

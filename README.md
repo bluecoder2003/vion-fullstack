@@ -274,3 +274,7 @@ Final Year Project -- Emotion-Aware Audiobook Generation System
 # License
 
 This project is intended for **academic and research purposes**.
+
+
+
+use uv run uvicorn main:app --reload   for backend

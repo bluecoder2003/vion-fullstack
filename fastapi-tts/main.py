@@ -716,44 +716,28 @@ async def emotion_demo_tts(payload: EmotionDemoRequest):
 TRANSLATIONS_DIR = OUTPUT_DIR / "translations"
 TRANSLATIONS_DIR.mkdir(exist_ok=True)
 
-# One universal model handles all supported languages via NLLB codes.
-# NLLB-200 is Meta's "No Language Left Behind" — 200 languages, ~2.4 GB download.
-_NLLB_MODEL = "facebook/nllb-200-distilled-600M"
-
-# ISO 639-1 code → NLLB FLORES-200 code
-_NLLB_LANG_CODES = {
-    "en": "eng_Latn",
-    "bn": "ben_Beng",
-    "hi": "hin_Deva",
-    "fr": "fra_Latn",
-    "es": "spa_Latn",
-    "de": "deu_Latn",
+# Supported ISO 639-1 codes → Google Translate codes.
+# Google Translate returns near-instant, high-quality translations for all
+# supported languages. Requires internet, but no model download.
+_TRANSLATION_MODELS = {
+    "en": "en",
+    "bn": "bn",
+    "hi": "hi",
+    "fr": "fr",
+    "es": "es",
+    "de": "de",
 }
-
-_TRANSLATION_MODELS = _NLLB_LANG_CODES  # kept for endpoint validation
-
-
-@lru_cache(maxsize=1)
-def _get_nllb_translator():
-    """Load and cache the NLLB translation pipeline."""
-    from transformers import pipeline as hf_pipeline
-    logger.info(f"Loading translation model: {_NLLB_MODEL}  (first load may take a minute)")
-    return hf_pipeline("translation", model=_NLLB_MODEL)
 
 
 def _translate_chunk(text: str, target_lang: str) -> str:
-    """Translate a single chunk using NLLB with explicit src/tgt codes."""
-    tgt_code = _NLLB_LANG_CODES.get(target_lang)
-    if not tgt_code:
+    """Translate a single chunk using Google Translate via deep-translator."""
+    from deep_translator import GoogleTranslator
+    target = _TRANSLATION_MODELS.get(target_lang)
+    if not target:
         raise ValueError(f"Unsupported target language: {target_lang}")
-    translator = _get_nllb_translator()
-    result = translator(
-        text,
-        src_lang="eng_Latn",
-        tgt_lang=tgt_code,
-        max_length=1024,
-    )
-    return result[0]["translation_text"]
+    translator = GoogleTranslator(source="en", target=target)
+    # Google's per-request cap is ~5000 chars — we chunk smaller upstream
+    return translator.translate(text)
 
 
 def _split_for_translation(text: str, max_chars: int = 600) -> list[str]:

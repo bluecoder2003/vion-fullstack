@@ -43,35 +43,80 @@ export function LanguagePicker({ open, onClose }: Props) {
   } = useReader();
   const t = themes[theme];
 
+  // Translate a full chapter — chunked into paragraph groups so no single
+  // request exceeds Google's 5000-char cap. Same logic as ReaderContent's
+  // auto-translation effect.
+  const translateChapter = useCallback(
+    async (chapter: { id: string; content: string }, lang: LanguageType) => {
+      const cacheKey = `${chapter.id}:${lang}`;
+      if (translations.has(cacheKey) || translatingKeys.has(cacheKey)) return;
+
+      setTranslating(cacheKey, true);
+      try {
+        const paragraphs = chapter.content.split("\n\n").filter((p) => p.trim());
+        const GROUP_CHARS = 4500;
+        const groups: string[] = [];
+        let current: string[] = [];
+        let currentLen = 0;
+        for (const p of paragraphs) {
+          if (currentLen + p.length > GROUP_CHARS && current.length > 0) {
+            groups.push(current.join("\n\n"));
+            current = [p];
+            currentLen = p.length;
+          } else {
+            current.push(p);
+            currentLen += p.length;
+          }
+        }
+        if (current.length > 0) groups.push(current.join("\n\n"));
+
+        const translated: string[] = [];
+        for (const group of groups) {
+          const res = await fetch(`${BACKEND}/api/translate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: group, target_lang: lang }),
+          });
+          if (!res.ok) throw new Error(`Server error ${res.status}`);
+          const data = await res.json();
+          translated.push(data.translated);
+          addTranslation(chapter.id, lang, translated.join("\n\n"));
+        }
+      } catch (err) {
+        console.error(`Translation failed for ${chapter.id}:`, err);
+      } finally {
+        setTranslating(cacheKey, false);
+      }
+    },
+    [translations, translatingKeys, addTranslation, setTranslating]
+  );
+
   const handleSelect = useCallback(
     async (lang: LanguageType) => {
       setLanguage(lang);
       onClose();
       if (lang === "en" || !book) return;
 
-      // Trigger translation of the current chapter if not already cached
-      const chapter = book.chapters[currentChapterIndex];
-      if (!chapter) return;
-      const cacheKey = `${chapter.id}:${lang}`;
-      if (translations.has(cacheKey) || translatingKeys.has(cacheKey)) return;
+      // 1. Translate current chapter FIRST (priority — the user is reading it now)
+      const chapters = book.chapters;
+      const currentIdx = currentChapterIndex;
+      if (chapters[currentIdx]) {
+        await translateChapter(chapters[currentIdx], lang);
+      }
 
-      setTranslating(cacheKey, true);
-      try {
-        const res = await fetch(`${BACKEND}/api/translate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: chapter.content, target_lang: lang }),
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
-        addTranslation(chapter.id, lang, data.translated);
-      } catch (err) {
-        console.error("Translation failed:", err);
-      } finally {
-        setTranslating(cacheKey, false);
+      // 2. Then background-translate every OTHER chapter, one at a time,
+      //    so future navigation is instant. Serialized to respect Google's
+      //    rate limits.
+      let queue = Promise.resolve();
+      for (let i = 0; i < chapters.length; i++) {
+        if (i === currentIdx) continue;
+        const ch = chapters[i];
+        const key = `${ch.id}:${lang}`;
+        if (translations.has(key) || translatingKeys.has(key)) continue;
+        queue = queue.then(() => translateChapter(ch, lang));
       }
     },
-    [book, currentChapterIndex, translations, translatingKeys, setLanguage, addTranslation, setTranslating, onClose]
+    [book, currentChapterIndex, translations, translatingKeys, setLanguage, translateChapter, onClose]
   );
 
   return (

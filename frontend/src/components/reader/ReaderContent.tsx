@@ -158,31 +158,63 @@ export function ReaderContent() {
     setSpreadIndex(0);
   }, [currentChapterIndex]);
 
-  // Auto-translate the current chapter when the language changes or when
-  // navigating to a chapter whose translation is not yet cached.
+  // Progressive translation — send paragraph groups one at a time so
+  // the user sees the first page translated in seconds rather than waiting
+  // for the whole chapter. Each group is ~1500 chars; groups arrive in order
+  // and the visible text grows as each response returns.
   useEffect(() => {
     if (!chapter || language === "en") return;
     const key = `${chapter.id}:${language}`;
     if (translations.has(key) || translatingKeys.has(key)) return;
 
+    // Split into groups of paragraphs, each up to ~4500 chars
+    // (just under Google's 5000-char per-request cap)
+    const paragraphs = chapter.content.split("\n\n").filter((p) => p.trim());
+    const GROUP_CHARS = 4500;
+    const groups: string[] = [];
+    let current: string[] = [];
+    let currentLen = 0;
+    for (const p of paragraphs) {
+      if (currentLen + p.length > GROUP_CHARS && current.length > 0) {
+        groups.push(current.join("\n\n"));
+        current = [p];
+        currentLen = p.length;
+      } else {
+        current.push(p);
+        currentLen += p.length;
+      }
+    }
+    if (current.length > 0) groups.push(current.join("\n\n"));
+
     let cancelled = false;
     setTranslating(key, true);
+
     (async () => {
-      try {
-        const res = await fetch("http://127.0.0.1:8000/api/translate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: chapter.content, target_lang: language }),
-        });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) addTranslation(chapter.id, language, data.translated);
-      } catch (err) {
-        console.error("Translation failed:", err);
-      } finally {
-        if (!cancelled) setTranslating(key, false);
+      const translatedGroups: string[] = [];
+      for (let i = 0; i < groups.length; i++) {
+        if (cancelled) return;
+        try {
+          const res = await fetch("http://127.0.0.1:8000/api/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: groups[i], target_lang: language }),
+          });
+          if (!res.ok) throw new Error(`Server error ${res.status}`);
+          const data = await res.json();
+          translatedGroups.push(data.translated);
+          // Update progressively — user sees text appear as each group finishes
+          if (!cancelled) {
+            addTranslation(chapter.id, language, translatedGroups.join("\n\n"));
+          }
+        } catch (err) {
+          console.error(`Translation failed for group ${i + 1}/${groups.length}:`, err);
+          // Fall back to original English for failed groups so reading continues
+          translatedGroups.push(groups[i]);
+        }
       }
+      if (!cancelled) setTranslating(key, false);
     })();
+
     return () => { cancelled = true; };
   }, [chapter, language, translations, translatingKeys, addTranslation, setTranslating]);
 
@@ -816,10 +848,10 @@ export function ReaderContent() {
             }}
           />
           <div style={{ color: t.text, fontSize: 14, fontWeight: 500 }}>
-            Translating…
+            Translating this page…
           </div>
           <div style={{ color: t.text, fontSize: 11, opacity: 0.5, marginTop: 4 }}>
-            First-time translation loads the language model
+            Cached automatically — future visits are instant
           </div>
         </div>
       )}

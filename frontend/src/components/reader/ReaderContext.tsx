@@ -148,17 +148,43 @@ export function ReaderProvider({ children }: { children: React.ReactNode }) {
   const [audioVoice, setAudioVoice] = useState("bm_george");
 
   // Language / translation
+  // Persistent cache — translations survive page reloads via localStorage.
+  const TRANSLATION_STORAGE_PREFIX = "vion:translation:";
+
   const [language, setLanguage] = useState<LanguageType>("en");
-  const [translations, setTranslations] = useState<Map<string, string>>(new Map());
+  const [translations, setTranslations] = useState<Map<string, string>>(() => {
+    const map = new Map<string, string>();
+    if (typeof window === "undefined") return map;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const rawKey = localStorage.key(i);
+        if (rawKey && rawKey.startsWith(TRANSLATION_STORAGE_PREFIX)) {
+          const value = localStorage.getItem(rawKey);
+          if (value) map.set(rawKey.substring(TRANSLATION_STORAGE_PREFIX.length), value);
+        }
+      }
+    } catch {
+      // localStorage unavailable — proceed with empty map
+    }
+    return map;
+  });
   const [translatingKeys, setTranslatingKeys] = useState<Set<string>>(new Set());
 
   const addTranslation = useCallback(
     (chapterId: string, lang: LanguageType, text: string) => {
+      const key = `${chapterId}:${lang}`;
       setTranslations((prev) => {
         const next = new Map(prev);
-        next.set(`${chapterId}:${lang}`, text);
+        next.set(key, text);
         return next;
       });
+      // Persist to localStorage so translations survive reloads / navigation
+      try {
+        localStorage.setItem(`${TRANSLATION_STORAGE_PREFIX}${key}`, text);
+      } catch (err) {
+        // Quota exceeded — drop silently. Full disk cache still lives on the backend.
+        console.warn("Translation localStorage write failed:", err);
+      }
     },
     []
   );

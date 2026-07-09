@@ -11,6 +11,8 @@ synchronized.
 
 <img width="1408" height="768" alt="image" src="https://github.com/user-attachments/assets/9bbbea3c-98f2-4fc7-9809-7c11a353fe07" />
 <img width="1357" height="422" alt="image" src="https://github.com/user-attachments/assets/dceb6bce-f517-429a-99af-0b160c393519" />
+<img width="1536" height="1024" alt="ChatGPT Image Jul 9, 2026, 12_15_10 PM" src="https://github.com/user-attachments/assets/e7e5fb50-1349-49c7-af97-77ecb6394d4b" />
+<img width="1536" height="1024" alt="ChatGPT Image Jul 9, 2026, 01_02_01 PM" src="https://github.com/user-attachments/assets/d20e9d1c-bd15-4e22-8fe0-8d9b1f524ead" />
 
 
 ------------------------------------------------------------------------

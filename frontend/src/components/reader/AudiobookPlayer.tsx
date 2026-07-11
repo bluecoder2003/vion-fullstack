@@ -92,6 +92,8 @@ export function AudiobookPlayer() {
     currentPlayingAmbient,
     setCurrentPlayingAmbient,
     audioVoice,
+    language,
+    translations,
   } = useReader();
 
   const t = themes[theme];
@@ -270,7 +272,7 @@ export function AudiobookPlayer() {
 
     // Parse paragraph details from paragraph-level file names
     const filename = url.split("/").pop() || "";
-    const match = filename.match(/chapter-(.+?)-part-(\d+)\.wav/i);
+    const match = filename.match(/chapter-(.+?)-part-(\d+)\.(?:wav|mp3)/i);
 
     let chapterIndex = idx;
     let paraIndex: number | null = null;
@@ -455,7 +457,7 @@ export function AudiobookPlayer() {
     for (let idx = 0; idx < current.length; idx++) {
       const url = current[idx];
       const filename = url.split("/").pop() || "";
-      const match = filename.match(/chapter-(.+?)-part-(\d+)\.wav/i);
+      const match = filename.match(/chapter-(.+?)-part-(\d+)\.(?:wav|mp3)/i);
       
       let chIdx = idx;
       let pIdx: number | null = null;
@@ -570,6 +572,14 @@ export function AudiobookPlayer() {
     setIsStarting(true);
     setError(null);
     try {
+      // For non-English audiobooks, use the translated content from the cache.
+      // Falls back to original English if a chapter hasn't finished translating.
+      const chapterContent = (ch: typeof book.chapters[number]) => {
+        if (language === "en") return String(ch.content || "");
+        const translated = translations.get(`${ch.id}:${language}`);
+        return translated || String(ch.content || "");
+      };
+
       const res = await fetch(`${BACKEND_BASE_URL}/api/audiobook`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -577,12 +587,15 @@ export function AudiobookPlayer() {
           book_id: String(book.id || ""),
           title: Array.isArray(book.title) ? book.title.join(", ") : String(book.title || ""),
           author: Array.isArray(book.author) ? book.author.join(", ") : String(book.author || ""),
-          voice: book.voice || audioVoice || "bm_george",
+          // User's explicit voice pick wins. book.voice is only the initial
+          // suggestion for the picker — never an override.
+          voice: audioVoice || book.voice || "bm_george",
+          language,
           chapters: (book.chapters || []).map((ch) => ({
             id: String(ch.id || ""),
             title: Array.isArray(ch.title) ? ch.title.join(", ") : String(ch.title || ""),
             page: typeof ch.page === "number" ? ch.page : undefined,
-            content: String(ch.content || ""),
+            content: chapterContent(ch),
           })),
         }),
       });
